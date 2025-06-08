@@ -1,23 +1,72 @@
 {
-  "name": "promt-template-manager",
-  "displayName": "Promt Template Manager",
-  "description": "This VSCode extension helps you save, organize, and reuse AI prompts with dynamic variable substitution capabilities.",
+  "name": "prompt-template-manager",
+  "displayName": "Prompt Template Manager",
+  "description": "VS Code extension to save, organize, and reuse AI prompts with dynamic variable substitution capabilities.",
   "version": "0.0.1",
+  "publisher": "your-publisher-name",
   "engines": {
     "vscode": "^1.19.0"
   },
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
+  "keywords": [
+    "prompt",
+    "template",
+    "ai",
+    "productivity"
+  ],
+  "activationEvents": [
+    "*"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "promt-template-manager.helloWorld",
-        "title": "Hello World"
+        "command": "prompt-template-manager.openPanel",
+        "title": "Open Prompt Template Manager",
+        "category": "Prompt Template Manager"
+      },
+      {
+        "command": "prompt-template-manager.createPrompt",
+        "title": "Create New Prompt",
+        "category": "Prompt Template Manager"
+      },
+      {
+        "command": "prompt-template-manager.exportData",
+        "title": "Export Prompts Data",
+        "category": "Prompt Template Manager"
+      },
+      {
+        "command": "prompt-template-manager.importData",
+        "title": "Import Prompts Data",
+        "category": "Prompt Template Manager"
+      },
+      {
+        "command": "prompt-template-manager.showStats",
+        "title": "Show Statistics",
+        "category": "Prompt Template Manager"
       }
-    ]
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "prompt-template-manager.openPanel"
+        },
+        {
+          "command": "prompt-template-manager.createPrompt"
+        },
+        {
+          "command": "prompt-template-manager.exportData"
+        },
+        {
+          "command": "prompt-template-manager.importData"
+        },
+        {
+          "command": "prompt-template-manager.showStats"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run package",
