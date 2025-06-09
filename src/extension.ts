@@ -106,13 +106,19 @@ class PromptTemplatePanel {
 				break;
 
 			case 'selectPrompt':
-				const selectedPrompt = this.promptManager.getPrompts().find(p => p.id === message.id);
+				const promptId = message.id;
+				console.log(`プロンプト選択: ID=${promptId}`);
+				
+				// 選択されたプロンプトデータを取得
+				const selectedPrompt = this.promptManager.getPrompts().find(p => p.id === promptId);
 				if (selectedPrompt) {
-					await this.promptManager.incrementUsage(message.id);
+					// プロンプト詳細を表示（使用回数は増加させない）
 					await this._panel.webview.postMessage({
 						type: 'showPromptDetail',
 						prompt: selectedPrompt
 					});
+				} else {
+					console.error(`プロンプトが見つかりません: ID=${promptId}`);
 				}
 				break;
 
@@ -134,10 +140,34 @@ class PromptTemplatePanel {
 				break;
 
 			case 'copyPrompt':
+				const copyPromptId = message.id;
+				console.log(`プロンプトコピー: ID=${copyPromptId}`);
+				
+				// 使用回数を増加
+				const copyIncrementSuccess = await this.promptManager.incrementUsage(copyPromptId);
+				if (copyIncrementSuccess) {
+					console.log(`コピー使用回数増加成功: ID=${copyPromptId}`);
+					// プロンプト一覧を更新（使用回数順に再ソート）
+					await this._sendPromptsToWebview();
+				}
+				
 				await this._copyPromptToClipboard(message.content);
 				break;
 
 			case 'executePrompt':
+				const executePromptId = message.promptId;
+				console.log(`プロンプト実行: ID=${executePromptId}`);
+				
+				// 使用回数を増加
+				if (executePromptId) {
+					const executeIncrementSuccess = await this.promptManager.incrementUsage(executePromptId);
+					if (executeIncrementSuccess) {
+						console.log(`実行使用回数増加成功: ID=${executePromptId}`);
+						// プロンプト一覧を更新（使用回数順に再ソート）
+						await this._sendPromptsToWebview();
+					}
+				}
+				
 				await this._executePrompt(message.content);
 				break;
 
@@ -964,7 +994,11 @@ class PromptTemplatePanel {
 		function copyPrompt(id) {
 			const prompt = currentPrompts.find(p => p.id === id);
 			if (prompt) {
-				vscode.postMessage({ type: 'copyPrompt', content: prompt.content });
+				vscode.postMessage({ 
+					type: 'copyPrompt', 
+					id: id,
+					content: prompt.content 
+				});
 			}
 		}
 		
@@ -982,7 +1016,11 @@ class PromptTemplatePanel {
 				content = content.replace(new RegExp(\`\\\\{\${variableName}\\\\}\`, 'g'), value);
 			});
 			
-			vscode.postMessage({ type: 'executePrompt', content });
+			vscode.postMessage({ 
+				type: 'executePrompt', 
+				promptId: selectedPrompt.id,
+				content 
+			});
 		}
 		
 		// ユーティリティ関数
@@ -1190,8 +1228,18 @@ class PromptManager {
 		try {
 			this.prompts = await this.storage.loadPrompts();
 			console.log(`${this.prompts.length}件のプロンプトを読み込みました`);
+
+			// データ整合性チェック
+			const integrityErrors = PromptValidator.validateStorageIntegrity(this.prompts);
+			if (integrityErrors.length > 0) {
+				console.warn('データ整合性の問題が検出されました:', integrityErrors);
+				vscode.window.showWarningMessage(
+					`プロンプトデータに${integrityErrors.length}件の整合性の問題が検出されました。データの確認をお勧めします。`
+				);
+			}
 		} catch (error) {
 			console.error('プロンプトデータの読み込みに失敗しました:', error);
+			vscode.window.showErrorMessage('プロンプトデータの読み込みに失敗しました。空のリストで開始します。');
 			this.prompts = [];
 		}
 	}
@@ -1210,30 +1258,42 @@ class PromptManager {
 
 	// プロンプトを追加
 	async addPrompt(input: PromptInput): Promise<PromptData | null> {
-		const errors = PromptValidator.validatePromptInput(input);
+		const errors = PromptValidator.validatePromptInput(input, this.prompts);
 		if (errors.length > 0) {
-			vscode.window.showErrorMessage(`入力エラー: ${errors[0].message}`);
+			const errorMessages = errors.map(e => e.message).join('\n');
+			vscode.window.showErrorMessage(`入力エラー:\n${errorMessages}`);
 			return null;
 		}
 
 		const newPrompt = PromptUtils.createPromptData(input);
 		this.prompts.push(newPrompt);
 		
-		const saved = await this.savePrompts();
-		if (saved) {
-			return newPrompt;
-		} else {
-			// 保存に失敗した場合はメモリからも削除
+		try {
+			const saved = await this.savePrompts();
+			if (saved) {
+				console.log(`プロンプト "${newPrompt.title}" が正常に保存されました`);
+				return newPrompt;
+			} else {
+				// 保存に失敗した場合はメモリからも削除
+				this.prompts.pop();
+				vscode.window.showErrorMessage('プロンプトの保存に失敗しました。しばらく後に再試行してください。');
+				return null;
+			}
+		} catch (error) {
+			// 保存中に例外が発生した場合
 			this.prompts.pop();
+			console.error('プロンプト保存中にエラーが発生:', error);
+			vscode.window.showErrorMessage(`プロンプトの保存中にエラーが発生しました: ${(error as Error).message}`);
 			return null;
 		}
 	}
 
 	// プロンプトを編集
 	async editPrompt(id: string, input: PromptInput): Promise<boolean> {
-		const errors = PromptValidator.validatePromptInput(input);
+		const errors = PromptValidator.validatePromptInput(input, this.prompts, id);
 		if (errors.length > 0) {
-			vscode.window.showErrorMessage(`入力エラー: ${errors[0].message}`);
+			const errorMessages = errors.map(e => e.message).join('\n');
+			vscode.window.showErrorMessage(`入力エラー:\n${errorMessages}`);
 			return false;
 		}
 
@@ -1242,13 +1302,24 @@ class PromptManager {
 			const originalPrompt = { ...this.prompts[index] };
 			this.prompts[index] = PromptUtils.updatePromptData(this.prompts[index], input);
 			
-			const saved = await this.savePrompts();
-			if (!saved) {
-				// 保存に失敗した場合は元に戻す
+			try {
+				const saved = await this.savePrompts();
+				if (saved) {
+					console.log(`プロンプト "${input.title}" が正常に更新されました`);
+					return true;
+				} else {
+					// 保存に失敗した場合は元に戻す
+					this.prompts[index] = originalPrompt;
+					vscode.window.showErrorMessage('プロンプトの更新保存に失敗しました。しばらく後に再試行してください。');
+					return false;
+				}
+			} catch (error) {
+				// 保存中に例外が発生した場合は元に戻す
 				this.prompts[index] = originalPrompt;
+				console.error('プロンプト更新保存中にエラーが発生:', error);
+				vscode.window.showErrorMessage(`プロンプトの更新中にエラーが発生しました: ${(error as Error).message}`);
 				return false;
 			}
-			return true;
 		}
 		return false;
 	}
@@ -1259,25 +1330,59 @@ class PromptManager {
 		if (index !== -1) {
 			const removedPrompt = this.prompts.splice(index, 1)[0];
 			
-			const saved = await this.savePrompts();
-			if (!saved) {
-				// 保存に失敗した場合は元に戻す
+			try {
+				const saved = await this.savePrompts();
+				if (saved) {
+					console.log(`プロンプト "${removedPrompt.title}" が正常に削除されました`);
+					return true;
+				} else {
+					// 保存に失敗した場合は元に戻す
+					this.prompts.splice(index, 0, removedPrompt);
+					vscode.window.showErrorMessage('プロンプトの削除保存に失敗しました。しばらく後に再試行してください。');
+					return false;
+				}
+			} catch (error) {
+				// 保存中に例外が発生した場合は元に戻す
 				this.prompts.splice(index, 0, removedPrompt);
+				console.error('プロンプト削除保存中にエラーが発生:', error);
+				vscode.window.showErrorMessage(`プロンプトの削除中にエラーが発生しました: ${(error as Error).message}`);
 				return false;
 			}
-			return true;
 		}
 		return false;
 	}
 
 	// 使用回数を増加
 	async incrementUsage(id: string): Promise<boolean> {
+		console.log(`使用回数増加試行: ID=${id}`);
 		const prompt = this.prompts.find(p => p.id === id);
 		if (prompt) {
+			const oldCount = prompt.usageCount;
 			prompt.usageCount++;
-			return await this.savePrompts();
+			console.log(`使用回数更新: "${prompt.title}" ${oldCount} -> ${prompt.usageCount}`);
+			
+			try {
+				const saved = await this.savePrompts();
+				if (saved) {
+					console.log(`使用回数保存成功: "${prompt.title}"`);
+					return true;
+				} else {
+					// 保存に失敗した場合は元に戻す
+					prompt.usageCount = oldCount;
+					console.error(`使用回数保存失敗: "${prompt.title}"`);
+					return false;
+				}
+			} catch (error) {
+				// 保存中に例外が発生した場合は元に戻す
+				prompt.usageCount = oldCount;
+				console.error(`使用回数保存中にエラー: "${prompt.title}"`, error);
+				return false;
+			}
+		} else {
+			console.error(`プロンプトが見つかりません: ID=${id}`);
+			console.log('存在するプロンプトID一覧:', this.prompts.map(p => p.id));
+			return false;
 		}
-		return false;
 	}
 
 	// プロンプトを検索
@@ -1321,19 +1426,69 @@ class PromptManager {
 	// データをインポート
 	async importData(jsonData: string): Promise<{ imported: number; errors: string[] }> {
 		try {
-			const exportData = JSON.parse(jsonData);
+			// JSONの解析
+			let exportData: any;
+			try {
+				exportData = JSON.parse(jsonData);
+			} catch (parseError) {
+				return { imported: 0, errors: ['不正なJSON形式です'] };
+			}
+
+			// データ形式の検証
+			const validationErrors = PromptValidator.validateImportData(exportData);
+			if (validationErrors.length > 0) {
+				const errorMessages = validationErrors.map(e => e.message);
+				return { imported: 0, errors: errorMessages };
+			}
+
+			// インポート処理
 			const importedPrompts = await this.storage.importData(exportData);
 			
-			// 既存のプロンプトに追加
-			this.prompts.push(...importedPrompts);
+			// タイトル重複チェック
+			const duplicates: string[] = [];
+			const validPrompts: PromptData[] = [];
 			
-			const saved = await this.savePrompts();
-			if (saved) {
-				return { imported: importedPrompts.length, errors: [] };
-			} else {
+			importedPrompts.forEach(prompt => {
+				const existingPrompt = this.prompts.find(p => 
+					p.title.toLowerCase() === prompt.title.toLowerCase()
+				);
+				if (existingPrompt) {
+					duplicates.push(prompt.title);
+				} else {
+					validPrompts.push(prompt);
+				}
+			});
+
+			// 有効なプロンプトのみ追加
+			this.prompts.push(...validPrompts);
+			
+			// データ整合性の検証
+			const integrityErrors = PromptValidator.validateStorageIntegrity(this.prompts);
+			if (integrityErrors.length > 0) {
+				// 追加したプロンプトを削除してロールバック
+				this.prompts.splice(-validPrompts.length);
+				return { imported: 0, errors: ['データの整合性エラーが検出されました'] };
+			}
+
+			// 保存
+			try {
+				const saved = await this.savePrompts();
+				if (saved) {
+					const result = { imported: validPrompts.length, errors: [] as string[] };
+					if (duplicates.length > 0) {
+						result.errors.push(`重複スキップ: ${duplicates.join(', ')}`);
+					}
+					return result;
+				} else {
+					// 保存に失敗した場合は追加したプロンプトを削除
+					this.prompts.splice(-validPrompts.length);
+					return { imported: 0, errors: ['データの保存に失敗しました'] };
+				}
+			} catch (saveError) {
 				// 保存に失敗した場合は追加したプロンプトを削除
-				this.prompts.splice(-importedPrompts.length);
-				return { imported: 0, errors: ['データの保存に失敗しました'] };
+				this.prompts.splice(-validPrompts.length);
+				console.error('インポートデータの保存に失敗:', saveError);
+				return { imported: 0, errors: [`保存エラー: ${(saveError as Error).message}`] };
 			}
 		} catch (error) {
 			console.error('インポートに失敗:', error);

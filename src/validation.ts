@@ -7,7 +7,7 @@ export class PromptValidator {
     /**
      * プロンプト入力データの検証
      */
-    static validatePromptInput(input: PromptInput): ValidationError[] {
+    static validatePromptInput(input: PromptInput, existingPrompts?: PromptData[], excludeId?: string): ValidationError[] {
         const errors: ValidationError[] = [];
 
         // タイトルの検証
@@ -21,6 +21,18 @@ export class PromptValidator {
                 field: 'title',
                 message: `タイトルは${PROMPT_CONSTANTS.MAX_TITLE_LENGTH}文字以内で入力してください`
             });
+        } else if (existingPrompts) {
+            // タイトルの重複チェック
+            const duplicatePrompt = existingPrompts.find(prompt => 
+                prompt.title.trim().toLowerCase() === input.title.trim().toLowerCase() && 
+                prompt.id !== excludeId
+            );
+            if (duplicatePrompt) {
+                errors.push({
+                    field: 'title',
+                    message: 'このタイトルは既に使用されています。別のタイトルを入力してください'
+                });
+            }
         }
 
         // 内容の検証
@@ -29,11 +41,26 @@ export class PromptValidator {
                 field: 'content',
                 message: 'プロンプト内容は必須です'
             });
+        } else if (input.content.trim().length < 3) {
+            errors.push({
+                field: 'content',
+                message: 'プロンプト内容は3文字以上で入力してください'
+            });
         } else if (input.content.length > PROMPT_CONSTANTS.MAX_CONTENT_LENGTH) {
             errors.push({
                 field: 'content',
                 message: `プロンプト内容は${PROMPT_CONSTANTS.MAX_CONTENT_LENGTH}文字以内で入力してください`
             });
+        }
+
+        // 説明の検証（空でない場合）
+        if (input.description && input.description.trim().length > 0) {
+            if (input.description.length > PROMPT_CONSTANTS.MAX_DESCRIPTION_LENGTH) {
+                errors.push({
+                    field: 'description',
+                    message: `説明は${PROMPT_CONSTANTS.MAX_DESCRIPTION_LENGTH}文字以内で入力してください`
+                });
+            }
         }
 
         // 優先度の検証
@@ -123,6 +150,151 @@ export class PromptValidator {
      */
     static validateTagName(tag: string): boolean {
         return !!(tag && tag.trim().length > 0 && tag.length <= 30);
+    }
+
+    /**
+     * インポートデータの形式検証
+     */
+    static validateImportData(data: any): ValidationError[] {
+        const errors: ValidationError[] = [];
+
+        // 基本構造の検証
+        if (!data || typeof data !== 'object') {
+            errors.push({
+                field: 'data',
+                message: 'データが不正な形式です'
+            });
+            return errors;
+        }
+
+        // プロンプト配列の検証
+        if (!Array.isArray(data.prompts)) {
+            errors.push({
+                field: 'prompts',
+                message: 'プロンプトデータが配列形式ではありません'
+            });
+            return errors;
+        }
+
+        // 各プロンプトデータの検証
+        data.prompts.forEach((prompt: any, index: number) => {
+            const promptErrors = this.validatePromptDataStructure(prompt, index);
+            errors.push(...promptErrors);
+        });
+
+        return errors;
+    }
+
+    /**
+     * プロンプトデータ構造の検証
+     */
+    static validatePromptDataStructure(data: any, index?: number): ValidationError[] {
+        const errors: ValidationError[] = [];
+        const prefix = index !== undefined ? `prompts[${index}]` : 'prompt';
+
+        // 必須フィールドの検証
+        const requiredFields = ['id', 'title', 'content', 'createdAt', 'updatedAt'];
+        requiredFields.forEach(field => {
+            if (!data[field]) {
+                errors.push({
+                    field: `${prefix}.${field}`,
+                    message: `必須フィールド '${field}' が不足しています`
+                });
+            }
+        });
+
+        // データ型の検証
+        if (data.usageCount !== undefined && typeof data.usageCount !== 'number') {
+            errors.push({
+                field: `${prefix}.usageCount`,
+                message: 'usageCountは数値である必要があります'
+            });
+        }
+
+        if (data.priority !== undefined && (typeof data.priority !== 'number' || data.priority < 1 || data.priority > 5)) {
+            errors.push({
+                field: `${prefix}.priority`,
+                message: 'priorityは1-5の数値である必要があります'
+            });
+        }
+
+        if (data.isFavorite !== undefined && typeof data.isFavorite !== 'boolean') {
+            errors.push({
+                field: `${prefix}.isFavorite`,
+                message: 'isFavoriteはbool値である必要があります'
+            });
+        }
+
+        if (data.tags !== undefined && !Array.isArray(data.tags)) {
+            errors.push({
+                field: `${prefix}.tags`,
+                message: 'tagsは配列である必要があります'
+            });
+        }
+
+        // 日付形式の検証
+        if (data.createdAt && !this.isValidDateString(data.createdAt)) {
+            errors.push({
+                field: `${prefix}.createdAt`,
+                message: 'createdAtの日付形式が不正です'
+            });
+        }
+
+        if (data.updatedAt && !this.isValidDateString(data.updatedAt)) {
+            errors.push({
+                field: `${prefix}.updatedAt`,
+                message: 'updatedAtの日付形式が不正です'
+            });
+        }
+
+        return errors;
+    }
+
+    /**
+     * 日付文字列の妥当性を検証
+     */
+    static isValidDateString(dateStr: string): boolean {
+        if (!dateStr || typeof dateStr !== 'string') return false;
+        const date = new Date(dateStr);
+        return !isNaN(date.getTime()) && date.toISOString() === dateStr;
+    }
+
+    /**
+     * ストレージデータの整合性を検証
+     */
+    static validateStorageIntegrity(prompts: PromptData[]): ValidationError[] {
+        const errors: ValidationError[] = [];
+        const seenIds = new Set<string>();
+
+        prompts.forEach((prompt, index) => {
+            // ID重複チェック
+            if (seenIds.has(prompt.id)) {
+                errors.push({
+                    field: `prompts[${index}].id`,
+                    message: `重複したID '${prompt.id}' が検出されました`
+                });
+            } else {
+                seenIds.add(prompt.id);
+            }
+
+            // 日付の妥当性チェック
+            if (prompt.createdAt > prompt.updatedAt) {
+                errors.push({
+                    field: `prompts[${index}].updatedAt`,
+                    message: '更新日時が作成日時より古い値になっています'
+                });
+            }
+
+            // 使用回数の妥当性チェック
+            if (prompt.usageCount < 0) {
+                errors.push({
+                    field: `prompts[${index}].usageCount`,
+                    message: '使用回数が負の値になっています'
+                });
+            }
+        });
+
+        return errors;
     }
 }
 

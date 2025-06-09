@@ -215,6 +215,9 @@ export const PROMPT_CONSTANTS = {
     /** 最大内容長 */
     MAX_CONTENT_LENGTH: 10000,
     
+    /** 最大説明長 */
+    MAX_DESCRIPTION_LENGTH: 500,
+    
     /** 最大タグ数 */
     MAX_TAGS_COUNT: 10,
     
