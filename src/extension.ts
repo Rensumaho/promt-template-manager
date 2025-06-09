@@ -1011,10 +1011,25 @@ export function activate(context: vscode.ExtensionContext) {
 	// Use the console to output diagnostic information (console.log) and errors (console.error)
 	// This line of code will only be executed once when your extension is activated
 	console.log('Prompt Template Manager が起動しました！');
-	vscode.window.showInformationMessage('Prompt Template Manager が正常にアクティベートされました！');
+	console.log('Extension Context:', context);
+	console.log('Extension URI:', context.extensionUri.toString());
+	
+	try {
+		vscode.window.showInformationMessage('Prompt Template Manager が正常にアクティベートされました！');
+	} catch (error) {
+		console.error('初期メッセージ表示エラー:', error);
+	}
 
 	// プロンプトマネージャーの初期化
-	const promptManager = new PromptManager(context);
+	let promptManager: PromptManager;
+	try {
+		promptManager = new PromptManager(context);
+		console.log('PromptManager が正常に初期化されました');
+	} catch (error) {
+		console.error('PromptManager 初期化エラー:', error);
+		vscode.window.showErrorMessage(`拡張機能の初期化に失敗しました: ${(error as Error).message}`);
+		return;
+	}
 
 	// メインパネルを開くコマンド
 	const openPanelCommand = vscode.commands.registerCommand('prompt-template-manager.openPanel', async () => {
@@ -1124,13 +1139,26 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 	});
 
-	context.subscriptions.push(
-		openPanelCommand, 
-		createPromptCommand, 
-		exportDataCommand, 
-		importDataCommand, 
-		showStatsCommand
-	);
+	try {
+		context.subscriptions.push(
+			openPanelCommand, 
+			createPromptCommand, 
+			exportDataCommand, 
+			importDataCommand, 
+			showStatsCommand
+		);
+		console.log('すべてのコマンドが正常に登録されました');
+		console.log('登録されたコマンド:', [
+			'prompt-template-manager.openPanel',
+			'prompt-template-manager.createPrompt',
+			'prompt-template-manager.exportData',
+			'prompt-template-manager.importData',
+			'prompt-template-manager.showStats'
+		]);
+	} catch (error) {
+		console.error('コマンド登録エラー:', error);
+		vscode.window.showErrorMessage(`コマンドの登録に失敗しました: ${(error as Error).message}`);
+	}
 }
 
 // This method is called when your extension is deactivated
@@ -1143,9 +1171,18 @@ class PromptManager {
 	private storage: PromptStorage;
 
 	constructor(context: vscode.ExtensionContext) {
-		this.context = context;
-		this.storage = new PromptStorage(context);
-		this.loadPrompts();
+		try {
+			console.log('PromptManager コンストラクタを開始');
+			this.context = context;
+			console.log('Context設定完了');
+			this.storage = new PromptStorage(context);
+			console.log('Storage初期化完了');
+			this.loadPrompts();
+			console.log('プロンプト読み込み開始');
+		} catch (error) {
+			console.error('PromptManager コンストラクタエラー:', error);
+			throw error;
+		}
 	}
 
 	// プロンプトデータの読み込み
