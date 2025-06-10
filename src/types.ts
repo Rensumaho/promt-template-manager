@@ -14,18 +14,6 @@ export interface PromptData {
     /** 使用回数 */
     usageCount: number;
     
-    /** 作成日時 */
-    createdAt: Date;
-    
-    /** 更新日時 */
-    updatedAt: Date;
-    
-    /** プロンプトの説明（オプション） */
-    description?: string;
-    
-    /** タグ（カテゴリ分け用） */
-    tags: string[];
-    
     /** プロンプトの優先度（1-5、5が最高） */
     priority: number;
     
@@ -68,8 +56,6 @@ export interface PromptVariable {
 export interface PromptInput {
     title: string;
     content: string;
-    description?: string;
-    tags?: string[];
     priority?: number;
     variables?: PromptVariable[];
 }
@@ -80,9 +66,6 @@ export interface PromptInput {
 export interface PromptSearchCriteria {
     /** 検索キーワード */
     query?: string;
-    
-    /** タグフィルタ */
-    tags?: string[];
     
     /** 優先度フィルタ */
     priority?: number;
@@ -105,8 +88,6 @@ export interface PromptSearchCriteria {
  */
 export type SortBy = 
     | 'usageCount'      // 使用回数順
-    | 'createdAt'       // 作成日時順
-    | 'updatedAt'       // 更新日時順
     | 'title'           // タイトル順
     | 'priority';       // 優先度順
 
@@ -122,12 +103,6 @@ export interface PromptCollection {
     /** プロンプトのマップ（ID -> PromptData） */
     prompts: Map<string, PromptData>;
     
-    /** タグの一覧 */
-    availableTags: Set<string>;
-    
-    /** 最後に更新された日時 */
-    lastUpdated: Date;
-    
     /** データバージョン（マイグレーション用） */
     version: string;
 }
@@ -137,8 +112,6 @@ export interface PromptCollection {
  */
 export interface SerializedPromptCollection {
     prompts: PromptData[];
-    availableTags: string[];
-    lastUpdated: string;
     version: string;
 }
 
@@ -171,9 +144,6 @@ export interface PromptStats {
     
     /** 今週使用されたプロンプト数 */
     weeklyUsage: number;
-    
-    /** 最もよく使われるタグ */
-    popularTags: Array<{ tag: string; count: number; }>;
     
     /** 最も使用頻度の高いプロンプト */
     mostUsedPrompt?: PromptData;

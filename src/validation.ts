@@ -1,7 +1,7 @@
 import { PROMPT_CONSTANTS, PromptData, PromptInput, PromptVariable, ValidationError } from './types';
 
 /**
- * プロンプト入力データのバリデーション
+ * プロンプトデータのバリデーション機能を提供するクラス
  */
 export class PromptValidator {
     /**
@@ -14,37 +14,34 @@ export class PromptValidator {
         if (!input.title || input.title.trim().length === 0) {
             errors.push({
                 field: 'title',
-                message: 'タイトルは必須です'
+                message: 'プロンプトのタイトルを入力してください'
             });
         } else if (input.title.length > PROMPT_CONSTANTS.MAX_TITLE_LENGTH) {
             errors.push({
                 field: 'title',
-                message: `タイトルは${PROMPT_CONSTANTS.MAX_TITLE_LENGTH}文字以内で入力してください`
+                message: `プロンプトタイトルは${PROMPT_CONSTANTS.MAX_TITLE_LENGTH}文字以内で入力してください`
             });
-        } else if (existingPrompts) {
-            // タイトルの重複チェック
-            const duplicatePrompt = existingPrompts.find(prompt => 
-                prompt.title.trim().toLowerCase() === input.title.trim().toLowerCase() && 
-                prompt.id !== excludeId
+        }
+
+        // 重複チェック
+        if (existingPrompts) {
+            const titleLower = input.title.toLowerCase();
+            const duplicate = existingPrompts.find(p => 
+                p.title.toLowerCase() === titleLower && p.id !== excludeId
             );
-            if (duplicatePrompt) {
+            if (duplicate) {
                 errors.push({
                     field: 'title',
-                    message: 'このタイトルは既に使用されています。別のタイトルを入力してください'
+                    message: '同じタイトルのプロンプトが既に存在します'
                 });
             }
         }
 
-        // 内容の検証
+        // プロンプト内容の検証
         if (!input.content || input.content.trim().length === 0) {
             errors.push({
                 field: 'content',
-                message: 'プロンプト内容は必須です'
-            });
-        } else if (input.content.trim().length < 3) {
-            errors.push({
-                field: 'content',
-                message: 'プロンプト内容は3文字以上で入力してください'
+                message: 'プロンプトの内容を入力してください'
             });
         } else if (input.content.length > PROMPT_CONSTANTS.MAX_CONTENT_LENGTH) {
             errors.push({
@@ -53,29 +50,11 @@ export class PromptValidator {
             });
         }
 
-        // 説明の検証（空でない場合）
-        if (input.description && input.description.trim().length > 0) {
-            if (input.description.length > PROMPT_CONSTANTS.MAX_DESCRIPTION_LENGTH) {
-                errors.push({
-                    field: 'description',
-                    message: `説明は${PROMPT_CONSTANTS.MAX_DESCRIPTION_LENGTH}文字以内で入力してください`
-                });
-            }
-        }
-
         // 優先度の検証
         if (input.priority !== undefined && (input.priority < 1 || input.priority > 5)) {
             errors.push({
                 field: 'priority',
                 message: '優先度は1から5の間で設定してください'
-            });
-        }
-
-        // タグの検証
-        if (input.tags && input.tags.length > PROMPT_CONSTANTS.MAX_TAGS_COUNT) {
-            errors.push({
-                field: 'tags',
-                message: `タグは${PROMPT_CONSTANTS.MAX_TAGS_COUNT}個まで設定できます`
             });
         }
 
@@ -146,13 +125,6 @@ export class PromptValidator {
     }
 
     /**
-     * タグ名の検証
-     */
-    static validateTagName(tag: string): boolean {
-        return !!(tag && tag.trim().length > 0 && tag.length <= 30);
-    }
-
-    /**
      * インポートデータの形式検証
      */
     static validateImportData(data: any): ValidationError[] {
@@ -193,7 +165,7 @@ export class PromptValidator {
         const prefix = index !== undefined ? `prompts[${index}]` : 'prompt';
 
         // 必須フィールドの検証
-        const requiredFields = ['id', 'title', 'content', 'createdAt', 'updatedAt'];
+        const requiredFields = ['id', 'title', 'content'];
         requiredFields.forEach(field => {
             if (!data[field]) {
                 errors.push({
@@ -225,38 +197,7 @@ export class PromptValidator {
             });
         }
 
-        if (data.tags !== undefined && !Array.isArray(data.tags)) {
-            errors.push({
-                field: `${prefix}.tags`,
-                message: 'tagsは配列である必要があります'
-            });
-        }
-
-        // 日付形式の検証
-        if (data.createdAt && !this.isValidDateString(data.createdAt)) {
-            errors.push({
-                field: `${prefix}.createdAt`,
-                message: 'createdAtの日付形式が不正です'
-            });
-        }
-
-        if (data.updatedAt && !this.isValidDateString(data.updatedAt)) {
-            errors.push({
-                field: `${prefix}.updatedAt`,
-                message: 'updatedAtの日付形式が不正です'
-            });
-        }
-
         return errors;
-    }
-
-    /**
-     * 日付文字列の妥当性を検証
-     */
-    static isValidDateString(dateStr: string): boolean {
-        if (!dateStr || typeof dateStr !== 'string') return false;
-        const date = new Date(dateStr);
-        return !isNaN(date.getTime()) && date.toISOString() === dateStr;
     }
 
     /**
@@ -275,14 +216,6 @@ export class PromptValidator {
                 });
             } else {
                 seenIds.add(prompt.id);
-            }
-
-            // 日付の妥当性チェック
-            if (prompt.createdAt > prompt.updatedAt) {
-                errors.push({
-                    field: `prompts[${index}].updatedAt`,
-                    message: '更新日時が作成日時より古い値になっています'
-                });
             }
 
             // 使用回数の妥当性チェック
@@ -313,37 +246,15 @@ export class PromptUtils {
      * プロンプト入力からPromptDataを作成
      */
     static createPromptData(input: PromptInput): PromptData {
-        const now = new Date();
-        
         return {
             id: this.generateId(),
             title: input.title.trim(),
             content: input.content.trim(),
-            description: input.description?.trim(),
-            tags: input.tags?.map(tag => tag.trim()).filter(tag => tag.length > 0) || [],
             priority: input.priority || PROMPT_CONSTANTS.DEFAULT_PRIORITY,
             usageCount: 0,
             isFavorite: false,
             isArchived: false,
-            createdAt: now,
-            updatedAt: now,
             variables: input.variables || []
-        };
-    }
-
-    /**
-     * プロンプトデータを更新
-     */
-    static updatePromptData(existing: PromptData, input: PromptInput): PromptData {
-        return {
-            ...existing,
-            title: input.title.trim(),
-            content: input.content.trim(),
-            description: input.description?.trim(),
-            tags: input.tags?.map(tag => tag.trim()).filter(tag => tag.length > 0) || existing.tags,
-            priority: input.priority !== undefined ? input.priority : existing.priority,
-            updatedAt: new Date(),
-            variables: input.variables || existing.variables
         };
     }
 
@@ -379,14 +290,10 @@ export class PromptUtils {
     }
 
     /**
-     * プロンプトデータをシリアライズ（日付を文字列に変換）
+     * プロンプトデータをシリアライズ
      */
     static serializePromptData(prompt: PromptData): any {
-        return {
-            ...prompt,
-            createdAt: prompt.createdAt.toISOString(),
-            updatedAt: prompt.updatedAt.toISOString()
-        };
+        return { ...prompt };
     }
 
     /**
@@ -394,15 +301,14 @@ export class PromptUtils {
      */
     static deserializePromptData(data: any): PromptData {
         return {
-            ...data,
-            createdAt: new Date(data.createdAt),
-            updatedAt: new Date(data.updatedAt),
-            tags: data.tags || [],
-            variables: data.variables || [],
+            id: data.id,
+            title: data.title,
+            content: data.content,
+            usageCount: data.usageCount || 0,
             priority: data.priority || PROMPT_CONSTANTS.DEFAULT_PRIORITY,
             isFavorite: (data.isFavorite === true || data.isFavorite === 'true') as boolean,
             isArchived: (data.isArchived === true || data.isArchived === 'true') as boolean,
-            description: data.description || undefined
+            variables: data.variables || []
         };
     }
 
@@ -417,22 +323,7 @@ export class PromptUtils {
         const searchText = query.toLowerCase();
         const title = prompt.title.toLowerCase();
         const content = prompt.content.toLowerCase();
-        const description = prompt.description?.toLowerCase() || '';
-        const tags = prompt.tags.join(' ').toLowerCase();
 
-        return title.includes(searchText) || 
-               content.includes(searchText) || 
-               description.includes(searchText) || 
-               tags.includes(searchText);
-    }
-
-    /**
-     * タグ配列を正規化（重複除去、空文字削除、ソート）
-     */
-    static normalizeTags(tags: string[]): string[] {
-        return Array.from(new Set(
-            tags.map(tag => tag.trim())
-                .filter(tag => tag.length > 0)
-        )).sort();
+        return title.includes(searchText) || content.includes(searchText);
     }
 } 

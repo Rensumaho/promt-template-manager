@@ -84,6 +84,7 @@ class PromptTemplatePanel {
 
 	private async _sendPromptsToWebview() {
 		const prompts = this.promptManager.getPrompts();
+		console.log(`WebViewにプロンプトを送信: ${prompts.length}件`, prompts);
 		await this._panel.webview.postMessage({
 			type: 'updatePrompts',
 			prompts: prompts
@@ -98,10 +99,16 @@ class PromptTemplatePanel {
 				break;
 
 			case 'searchPrompts':
-				const searchResults = this.promptManager.searchPrompts(message.query);
+				const searchQuery = message.query;
+				const searchOptions = message.options || {};
+				console.log(`検索実行: クエリ="${searchQuery}", オプション:`, searchOptions);
+				
+				const searchResults = this.promptManager.advancedSearch(searchQuery, searchOptions);
 				await this._panel.webview.postMessage({
 					type: 'updatePrompts',
-					prompts: searchResults
+					prompts: searchResults,
+					searchQuery: searchQuery,
+					searchHighlight: true
 				});
 				break;
 
@@ -126,17 +133,8 @@ class PromptTemplatePanel {
 				await this._showCreatePromptDialog();
 				break;
 
-			case 'editPrompt':
-				await this._showEditPromptDialog(message.id);
-				break;
-
 			case 'deletePrompt':
 				await this._deletePrompt(message.id);
-				break;
-
-			case 'toggleFavorite':
-				await this.promptManager.toggleFavorite(message.id);
-				await this._sendPromptsToWebview();
 				break;
 
 			case 'copyPrompt':
@@ -177,116 +175,61 @@ class PromptTemplatePanel {
 	}
 
 	private async _showCreatePromptDialog() {
+		console.log('プロンプト作成ダイアログを開始');
 		const title = await vscode.window.showInputBox({
 			prompt: 'プロンプトのタイトルを入力してください',
 			placeHolder: 'タイトル'
 		});
 
-		if (!title) return;
+		if (!title) {
+			console.log('タイトルが未入力のため作成をキャンセル');
+			return;
+		}
 
 		const content = await vscode.window.showInputBox({
 			prompt: 'プロンプトの内容を入力してください',
 			placeHolder: 'プロンプトの内容...'
 		});
 
-		if (!content) return;
+		if (!content) {
+			console.log('内容が未入力のため作成をキャンセル');
+			return;
+		}
 
-		const description = await vscode.window.showInputBox({
-			prompt: 'プロンプトの説明を入力してください（任意）',
-			placeHolder: '説明...'
-		});
-
-		const tagsInput = await vscode.window.showInputBox({
-			prompt: 'タグを入力してください（カンマ区切り、任意）',
-			placeHolder: 'ai, chatgpt, development'
-		});
-
-		const tags = tagsInput ? tagsInput.split(',').map(t => t.trim()).filter(t => t.length > 0) : [];
-
+		console.log(`プロンプト作成中: タイトル="${title}", 内容="${content}"`);
 		const result = await this.promptManager.addPrompt({
 			title,
-			content,
-			description,
-			tags
+			content
 		});
 
 		if (result) {
-			vscode.window.showInformationMessage(`プロンプト "${title}" が保存されました！`);
+			console.log('プロンプト作成成功:', result);
 			await this._sendPromptsToWebview();
+		} else {
+			console.log('プロンプト作成失敗');
 		}
 	}
 
-	private async _showEditPromptDialog(id: string) {
-		const prompt = this.promptManager.getPrompts().find(p => p.id === id);
-		if (!prompt) return;
 
-		const title = await vscode.window.showInputBox({
-			prompt: 'プロンプトのタイトルを編集してください',
-			value: prompt.title
-		});
-
-		if (!title) return;
-
-		const content = await vscode.window.showInputBox({
-			prompt: 'プロンプトの内容を編集してください',
-			value: prompt.content
-		});
-
-		if (!content) return;
-
-		const description = await vscode.window.showInputBox({
-			prompt: 'プロンプトの説明を編集してください（任意）',
-			value: prompt.description || ''
-		});
-
-		const tagsInput = await vscode.window.showInputBox({
-			prompt: 'タグを編集してください（カンマ区切り、任意）',
-			value: prompt.tags.join(', ')
-		});
-
-		const tags = tagsInput ? tagsInput.split(',').map(t => t.trim()).filter(t => t.length > 0) : [];
-
-		const success = await this.promptManager.editPrompt(id, {
-			title,
-			content,
-			description,
-			tags
-		});
-
-		if (success) {
-			vscode.window.showInformationMessage(`プロンプト "${title}" が更新されました！`);
-			await this._sendPromptsToWebview();
-		}
-	}
 
 	private async _deletePrompt(id: string) {
 		const prompt = this.promptManager.getPrompts().find(p => p.id === id);
 		if (!prompt) return;
 
-		const result = await vscode.window.showWarningMessage(
-			`プロンプト "${prompt.title}" を削除しますか？`,
-			{ modal: true },
-			'削除'
-		);
-
-		if (result === '削除') {
-			const success = await this.promptManager.deletePrompt(id);
-			if (success) {
-				vscode.window.showInformationMessage(`プロンプト "${prompt.title}" が削除されました。`);
-				await this._sendPromptsToWebview();
-			}
+		// 確認なしで削除
+		const success = await this.promptManager.deletePrompt(id);
+		if (success) {
+			await this._sendPromptsToWebview();
 		}
 	}
 
 	private async _copyPromptToClipboard(content: string) {
 		await vscode.env.clipboard.writeText(content);
-		vscode.window.showInformationMessage('プロンプトをクリップボードにコピーしました');
 	}
 
 	private async _executePrompt(content: string) {
 		// ここで実際のAIチャット入力欄への挿入処理を実装
 		await vscode.env.clipboard.writeText(content);
-		vscode.window.showInformationMessage('プロンプトをクリップボードにコピーしました（実行機能は今後実装予定）');
 	}
 
 	private _update() {
@@ -319,7 +262,10 @@ class PromptTemplatePanel {
 			height: calc(100vh - 40px);
 			gap: 1px;
 			min-height: 400px;
+			flex-direction: row; /* デフォルトは横並び */
 		}
+
+
 		
 		.panel {
 			border: 1px solid var(--vscode-panel-border);
@@ -329,23 +275,41 @@ class PromptTemplatePanel {
 		.search-panel {
 			flex: 0 0 280px;
 			padding: 16px;
-			overflow-y: auto;
+			overflow: hidden;
+			height: 100%;
+			display: flex;
+			flex-direction: column;
 		}
 		
 		.detail-panel {
 			flex: 1;
 			padding: 16px;
 			overflow-y: auto;
+			height: 100%;
 		}
 		
 		.variable-panel {
 			flex: 0 0 280px;
 			padding: 16px;
-			overflow-y: auto;
+			overflow: hidden;
+			height: 100%;
+			display: flex;
+			flex-direction: column;
 		}
 		
 		.search-header {
-			margin-bottom: 16px;
+			flex: none;
+			margin-bottom: 12px;
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+		}
+
+		/* 非表示時のヘッダー中央寄せ */
+		.container.search-hidden .search-header,
+		.container.detail-hidden .search-header,
+		.container.variable-hidden .variable-header {
+			justify-content: center;
 		}
 		
 		.add-button {
@@ -358,6 +322,9 @@ class PromptTemplatePanel {
 			cursor: pointer;
 			margin-bottom: 12px;
 			font-size: 13px;
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
 		}
 		
 		.add-button:hover {
@@ -380,8 +347,9 @@ class PromptTemplatePanel {
 		}
 		
 		.prompt-list {
-			max-height: calc(100vh - 120px);
+			flex: 1;
 			overflow-y: auto;
+			margin-top: 12px;
 		}
 		
 		.prompt-item {
@@ -423,7 +391,7 @@ class PromptTemplatePanel {
 		
 		.prompt-meta {
 			display: flex;
-			justify-content: space-between;
+			justify-content: flex-start;
 			align-items: center;
 			font-size: 11px;
 			color: var(--vscode-descriptionForeground);
@@ -513,8 +481,7 @@ class PromptTemplatePanel {
 		}
 		
 		.detail-meta {
-			display: grid;
-			grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+			display: flex;
 			gap: 12px;
 			font-size: 12px;
 			color: var(--vscode-descriptionForeground);
@@ -522,11 +489,14 @@ class PromptTemplatePanel {
 		
 		.meta-item {
 			display: flex;
-			justify-content: space-between;
 		}
 		
 		.variable-header {
-			margin-bottom: 16px;
+			flex: none;
+			margin-bottom: 12px;
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
 		}
 		
 		.variable-title {
@@ -620,20 +590,306 @@ class PromptTemplatePanel {
 		.scrollbar::-webkit-scrollbar-thumb:hover {
 			background-color: var(--vscode-scrollbarSlider-hoverBackground);
 		}
+
+
+
+		/* 通知 */
+		.notification {
+			position: fixed;
+			top: 20px;
+			right: 20px;
+			background: var(--vscode-notifications-background);
+			border: 1px solid var(--vscode-notifications-border);
+			color: var(--vscode-notifications-foreground);
+			padding: 12px 16px;
+			border-radius: 4px;
+			min-width: 200px;
+			box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+			z-index: 2000;
+			transform: translateX(100%);
+			transition: transform 0.3s ease;
+		}
+
+		.notification.show {
+			transform: translateX(0);
+		}
+
+		.notification-success {
+			border-left: 4px solid #4CAF50;
+		}
+
+		.notification-error {
+			border-left: 4px solid #f44336;
+		}
+
+		.notification-warning {
+			border-left: 4px solid #ff9800;
+		}
+
+		.notification-info {
+			border-left: 4px solid #2196F3;
+		}
+
+		/* パネル切り替えボタン */
+		.panel-toggle-btn {
+			background: var(--vscode-button-secondaryBackground);
+			color: var(--vscode-button-secondaryForeground);
+			border: none;
+			padding: 4px 8px;
+			border-radius: 3px;
+			cursor: pointer;
+			font-size: 11px;
+			min-width: 24px;
+			height: 24px;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+		}
+
+		.panel-toggle-btn:hover {
+			background: var(--vscode-button-secondaryHoverBackground);
+		}
+
+		.panel-header-title {
+			flex: 1;
+			margin: 0;
+			font-size: 14px;
+			font-weight: bold;
+			color: var(--vscode-foreground);
+		}
+
+		/* 非表示状態のパネル */
+		.panel.hidden {
+			display: none !important;
+		}
+
+		/* パネルが非表示の時のレイアウト調整 */
+		.container.search-hidden .search-panel {
+			flex: 0 0 auto;
+			width: 50px;
+		}
+
+		.container.search-hidden .search-content,
+		.container.search-hidden .prompt-list {
+			display: none;
+		}
+
+		.container.search-hidden .panel-header-title {
+			display: none;
+		}
+
+		.container.detail-hidden .detail-panel {
+			flex: 0 0 auto;
+			width: 50px;
+		}
+
+		.container.detail-hidden #promptDetail {
+			display: none;
+		}
+
+		.container.detail-hidden .panel-header-title {
+			display: none;
+		}
+
+		.container.variable-hidden .variable-panel {
+			flex: 0 0 auto;
+			width: 50px;
+		}
+
+		.container.variable-hidden #variablePanel {
+			display: none;
+		}
+
+		.container.variable-hidden .panel-header-title {
+			display: none;
+		}
+
+
+			.search-panel.collapsed {
+				display: block !important;
+				flex: 0 0 auto !important;
+				height: 35vh !important;
+				width: 100% !important;
+				overflow: visible !important;
+			}
+		}
+
+		/* 極超極小画面（250px以下）：最小機能表示 */
+		@media screen and (max-width: 250px) {
+			.container {
+				flex-direction: column !important;
+				height: 100vh !important;
+				display: flex !important;
+			}
+			
+			.search-panel {
+				flex: 1 !important;
+				width: 100% !important;
+				min-height: 20vh;
+				max-height: 30vh;
+				padding: 4px;
+			}
+			
+			.detail-panel {
+				flex: 2 !important;
+				width: 100% !important;
+				min-height: 40vh;
+				padding: 4px;
+			}
+			
+			.variable-panel {
+				flex: 1 !important;
+				width: 100% !important;
+				min-height: 20vh;
+				max-height: 30vh;
+				padding: 4px;
+			}
+			
+			.add-button {
+				font-size: 10px;
+				padding: 6px 8px;
+				margin-bottom: 4px;
+				width: 100%;
+			}
+			
+			.search-box {
+				font-size: 11px;
+				padding: 4px 6px;
+				width: 100%;
+			}
+			
+			.prompt-item {
+				padding: 2px;
+				margin-bottom: 1px;
+			}
+			
+			.prompt-title {
+				font-size: 9px;
+			}
+			
+			.prompt-summary {
+				font-size: 8px;
+			}
+			
+			.detail-title {
+				font-size: 10px;
+			}
+			
+			.detail-content {
+				padding: 2px;
+				font-size: 8px;
+			}
+			
+			.execute-button {
+				font-size: 12px;
+				padding: 8px 12px;
+				width: 100%;
+			}
+			
+			.prompt-list {
+				height: calc(100% - 60px);
+				max-height: none;
+			}
+			
+			.panel-toggle {
+				display: none !important;
+			}
+		}
+
+		/* 横幅優先モード：縦が小さい場合（高さ400px以下） */
+		@media screen and (max-height: 400px) {
+			.detail-panel {
+				min-height: 200px;
+			}
+		}
+
+		/* 折りたたみ可能な左パネル（小画面用） */
+		.panel-toggle {
+			display: none;
+			position: absolute;
+			top: 10px;
+			right: 10px;
+			background: var(--vscode-button-background);
+			color: var(--vscode-button-foreground);
+			border: none;
+			border-radius: 3px;
+			padding: 4px 8px;
+			font-size: 12px;
+			cursor: pointer;
+			z-index: 100;
+		}
+
+		@media screen and (max-width: 900px) {
+			.panel-toggle {
+				display: block;
+			}
+			
+			.search-panel.collapsed {
+				flex: 0 0 40px;
+				overflow: hidden;
+			}
+			
+			.search-panel.collapsed .search-header,
+			.search-panel.collapsed .prompt-list {
+				display: none;
+			}
+		}
+
+		/* コンパクトモード：高さが制限されている場合 */
+		body.compact-mode .container {
+			height: auto;
+			max-height: 400px;
+		}
+
+		body.compact-mode .search-panel {
+			max-height: 60px;
+		}
+
+		body.compact-mode .detail-panel {
+			min-height: 150px;
+		}
+
+		body.compact-mode .variable-panel {
+			max-height: 60px;
+		}
+
+		body.compact-mode .prompt-list {
+			max-height: 40px;
+		}
+
+		body.compact-mode .detail-content {
+			max-height: 100px;
+			overflow-y: auto;
+		}
+
+		/* スクロール最適化 */
+		.detail-content {
+			overflow-y: auto;
+		}
+
+		.prompt-list {
+			overflow-y: auto;
+		}
 	</style>
 </head>
 <body>
 	<div class="container">
 		<!-- 左側: 検索・一覧パネル -->
-		<div class="panel search-panel scrollbar">
+		<div class="panel search-panel scrollbar" id="searchPanel">
 			<div class="search-header">
+				<h3 class="panel-header-title">📝 プロンプト一覧</h3>
+				<button class="panel-toggle-btn" onclick="togglePanel('search')" title="パネルの表示/非表示">
+					👁️
+				</button>
+			</div>
+			<div class="search-content">
 				<button class="add-button" onclick="createPrompt()">
 					➕ 新しいプロンプトを追加
 				</button>
 				<input 
 					type="text" 
 					class="search-box" 
-					id="searchBox"
+					id="searchInput"
 					placeholder="プロンプトを検索..." 
 					oninput="searchPrompts(this.value)"
 				/>
@@ -648,8 +904,14 @@ class PromptTemplatePanel {
 		</div>
 		
 		<!-- 中央: 詳細表示パネル -->
-		<div class="panel detail-panel scrollbar">
-			<div id="promptDetail">
+		<div class="panel detail-panel scrollbar" id="detailPanel">
+			<div class="search-header">
+				<h3 class="panel-header-title">📄 プロンプト詳細</h3>
+				<button class="panel-toggle-btn" onclick="togglePanel('detail')" title="パネルの表示/非表示">
+					👁️
+				</button>
+			</div>
+			<div id="promptDetail" style="flex: 1; overflow-y: auto;">
 				<div class="empty-state">
 					<div class="empty-icon">👈</div>
 					<div>左側からプロンプトを選択してください</div>
@@ -658,11 +920,14 @@ class PromptTemplatePanel {
 		</div>
 		
 		<!-- 右側: 変数設定パネル -->
-		<div class="panel variable-panel scrollbar">
+		<div class="panel variable-panel scrollbar" id="variableContainer">
 			<div class="variable-header">
-				<h3 class="variable-title">変数設定</h3>
+				<h3 class="panel-header-title">⚙️ 変数設定</h3>
+				<button class="panel-toggle-btn" onclick="togglePanel('variable')" title="パネルの表示/非表示">
+					👁️
+				</button>
 			</div>
-			<div id="variablePanel">
+			<div id="variablePanel" style="flex: 1; overflow-y: auto;">
 				<div class="empty-state">
 					<div class="empty-icon">⚙️</div>
 					<div>プロンプトを選択すると<br>変数設定が表示されます</div>
@@ -693,8 +958,24 @@ class PromptTemplatePanel {
 		
 		// 初期化完了を通知
 		document.addEventListener('DOMContentLoaded', () => {
+			initKeyboardShortcuts();
+			initResponsiveLayout();
 			vscode.postMessage({ type: 'ready' });
 		});
+
+		// レスポンシブレイアウトの初期化
+		function initResponsiveLayout() {
+			// ウィンドウサイズ変更時の処理
+			window.addEventListener('resize', handleResize);
+			
+			// 初期レイアウトの調整
+			handleResize();
+		}
+
+		function handleResize() {
+			// 画面サイズに関係なく常に同じレイアウトを維持
+			console.log('ウィンドウサイズ:', window.innerWidth);
+		}
 		
 		// キーボードナビゲーション
 		document.addEventListener('keydown', (event) => {
@@ -794,10 +1075,12 @@ class PromptTemplatePanel {
 		
 		// プロンプト一覧を更新
 		function updatePromptList(prompts) {
+			console.log('updatePromptList called with:', prompts);
 			currentPrompts = prompts;
 			const listElement = document.getElementById('promptList');
 			
 			if (prompts.length === 0) {
+				console.log('プロンプトが0件のため空の状態を表示');
 				listElement.innerHTML = \`
 					<div class="empty-state">
 						<div class="empty-icon">📭</div>
@@ -809,20 +1092,16 @@ class PromptTemplatePanel {
 			}
 			
 			listElement.innerHTML = prompts.map(prompt => \`
-				<div class="prompt-item" onclick="selectPrompt('\${prompt.id}')" data-id="\${prompt.id}">
+				<div class="prompt-item" 
+					onclick="selectPrompt('\${prompt.id}')" 
+					data-id="\${prompt.id}">
 					<div class="prompt-title">
 						\${prompt.isFavorite ? '<span class="favorite-icon">⭐</span> ' : ''}\${escapeHtml(prompt.title)}
 					</div>
 					<div class="prompt-summary">\${escapeHtml(prompt.content.substring(0, 60))}\${prompt.content.length > 60 ? '...' : ''}</div>
 					<div class="prompt-meta">
 						<span>使用回数: <span class="usage-count">\${prompt.usageCount}</span></span>
-						<span>\${formatDate(prompt.updatedAt)}</span>
 					</div>
-					\${prompt.tags.length > 0 ? \`
-						<div class="tags">
-							\${prompt.tags.map(tag => \`<span class="tag">\${escapeHtml(tag)}</span>\`).join('')}
-						</div>
-					\` : ''}
 				</div>
 			\`).join('');
 		}
@@ -850,12 +1129,8 @@ class PromptTemplatePanel {
 				<div class="detail-header">
 					<h2 class="detail-title">\${prompt.isFavorite ? '⭐ ' : ''}\${escapeHtml(prompt.title)}</h2>
 					<div class="detail-actions">
-						<button class="action-button" onclick="toggleFavorite('\${prompt.id}')">
-							\${prompt.isFavorite ? '💔 お気に入り解除' : '❤️ お気に入り'}
-						</button>
-						<button class="action-button" onclick="editPrompt('\${prompt.id}')">✏️ 編集</button>
-						<button class="action-button" onclick="deletePrompt('\${prompt.id}')">🗑️ 削除</button>
-						<button class="action-button" onclick="copyPrompt('\${prompt.id}')">📋 コピー</button>
+						<button class="action-button" onclick="deletePrompt('\${prompt.id}')">🗑️</button>
+						<button class="action-button" onclick="copyPrompt('\${prompt.id}')">📋</button>
 					</div>
 				</div>
 				
@@ -866,24 +1141,6 @@ class PromptTemplatePanel {
 						<span>使用回数:</span>
 						<span>\${prompt.usageCount}回</span>
 					</div>
-					<div class="meta-item">
-						<span>優先度:</span>
-						<span>\${prompt.priority}/5</span>
-					</div>
-					<div class="meta-item">
-						<span>作成日:</span>
-						<span>\${formatDate(prompt.createdAt)}</span>
-					</div>
-					<div class="meta-item">
-						<span>更新日:</span>
-						<span>\${formatDate(prompt.updatedAt)}</span>
-					</div>
-					\${prompt.description ? \`
-						<div class="meta-item" style="grid-column: span 2;">
-							<span>説明:</span>
-							<span>\${escapeHtml(prompt.description)}</span>
-						</div>
-					\` : ''}
 				</div>
 			\`;
 			
@@ -969,25 +1226,106 @@ class PromptTemplatePanel {
 		function searchPrompts(query) {
 			vscode.postMessage({ type: 'searchPrompts', query });
 		}
+
+
+
+		// 通知機能は削除しました
+
+		// キーボードショートカット
+		function initKeyboardShortcuts() {
+			document.addEventListener('keydown', (e) => {
+				// Ctrl+F: 検索フォーカス
+				if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+					e.preventDefault();
+					const searchInput = document.getElementById('searchInput');
+					if (searchInput) {
+						searchInput.focus();
+						searchInput.select();
+					}
+				}
+				
+				// Ctrl+N: 新規プロンプト作成
+				if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
+					e.preventDefault();
+					createPrompt();
+				}
+				
+				// Ctrl+Enter: 選択したプロンプトを実行
+				if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+					e.preventDefault();
+					if (selectedPrompt) {
+						executePrompt();
+					}
+				}
+				
+				// Ctrl+C: 選択したプロンプトをコピー
+				if ((e.ctrlKey || e.metaKey) && e.key === 'c' && !e.shiftKey) {
+					const activeElement = document.activeElement;
+					// テキスト入力中でない場合のみ実行
+					if (activeElement.tagName !== 'INPUT' && activeElement.tagName !== 'TEXTAREA') {
+						e.preventDefault();
+						if (selectedPrompt) {
+							copyPrompt(selectedPrompt.id);
+						}
+					}
+				}
+				
+				// Delete: 選択したプロンプトを削除
+				if (e.key === 'Delete' && selectedPrompt) {
+					e.preventDefault();
+					deletePrompt(selectedPrompt.id);
+				}
+				
+
+			});
+		}
+
+		// パネルの表示・非表示切り替え機能
+		function togglePanel(panelType) {
+			const container = document.querySelector('.container');
+			let className, panelName, buttonSelector;
+			
+			switch (panelType) {
+				case 'search':
+					className = 'search-hidden';
+					panelName = 'プロンプト一覧';
+					buttonSelector = '#searchPanel .panel-toggle-btn';
+					break;
+				case 'detail':
+					className = 'detail-hidden';
+					panelName = 'プロンプト詳細';
+					buttonSelector = '#detailPanel .panel-toggle-btn';
+					break;
+				case 'variable':
+					className = 'variable-hidden';
+					panelName = '変数設定';
+					buttonSelector = '#variableContainer .panel-toggle-btn';
+					break;
+				default:
+					return;
+			}
+			
+			const button = document.querySelector(buttonSelector);
+			
+			if (container.classList.contains(className)) {
+				container.classList.remove(className);
+				button.textContent = '👁️';
+				button.title = 'パネルを非表示にする';
+			} else {
+				container.classList.add(className);
+				button.textContent = '👀';
+				button.title = 'パネルを表示する';
+			}
+		}
 		
 		// 新しいプロンプトを作成
 		function createPrompt() {
 			vscode.postMessage({ type: 'createPrompt' });
 		}
 		
-		// プロンプトを編集
-		function editPrompt(id) {
-			vscode.postMessage({ type: 'editPrompt', id });
-		}
-		
 		// プロンプトを削除
 		function deletePrompt(id) {
 			vscode.postMessage({ type: 'deletePrompt', id });
-		}
-		
-		// お気に入りを切り替え
-		function toggleFavorite(id) {
-			vscode.postMessage({ type: 'toggleFavorite', id });
 		}
 		
 		// プロンプトをコピー
@@ -1053,7 +1391,7 @@ export function activate(context: vscode.ExtensionContext) {
 	console.log('Extension URI:', context.extensionUri.toString());
 	
 	try {
-		vscode.window.showInformationMessage('Prompt Template Manager が正常にアクティベートされました！');
+		// Prompt Template Manager が正常にアクティベートされました
 	} catch (error) {
 		console.error('初期メッセージ表示エラー:', error);
 	}
@@ -1065,20 +1403,18 @@ export function activate(context: vscode.ExtensionContext) {
 		console.log('PromptManager が正常に初期化されました');
 	} catch (error) {
 		console.error('PromptManager 初期化エラー:', error);
-		vscode.window.showErrorMessage(`拡張機能の初期化に失敗しました: ${(error as Error).message}`);
+		// 拡張機能の初期化に失敗しました
 		return;
 	}
 
 	// メインパネルを開くコマンド
 	const openPanelCommand = vscode.commands.registerCommand('prompt-template-manager.openPanel', async () => {
 		console.log('openPanel コマンドが実行されました');
-		vscode.window.showInformationMessage('Prompt Template Manager パネルを表示します...');
 		try {
 			PromptTemplatePanel.createOrShow(context.extensionUri, promptManager);
 			console.log('Webviewパネルが正常に表示されました');
 		} catch (error) {
 			console.error('パネル表示中にエラーが発生:', error);
-			vscode.window.showErrorMessage(`パネル表示エラー: ${(error as Error).message}`);
 		}
 	});
 
@@ -1097,7 +1433,6 @@ export function activate(context: vscode.ExtensionContext) {
 
 			if (content) {
 				await promptManager.addPrompt({ title, content });
-				vscode.window.showInformationMessage(`プロンプト "${title}" が保存されました！`);
 			}
 		}
 	});
@@ -1117,10 +1452,9 @@ export function activate(context: vscode.ExtensionContext) {
 
 			if (saveUri) {
 				await vscode.workspace.fs.writeFile(saveUri, Buffer.from(exportData, 'utf8'));
-				vscode.window.showInformationMessage(`プロンプトデータを ${saveUri.fsPath} にエクスポートしました`);
 			}
 		} catch (error) {
-			vscode.window.showErrorMessage(`エクスポートに失敗しました: ${(error as Error).message}`);
+			// エクスポートに失敗しました
 		}
 	});
 
@@ -1143,14 +1477,10 @@ export function activate(context: vscode.ExtensionContext) {
 				
 				const result = await promptManager.importData(jsonData);
 				
-				if (result.errors.length > 0) {
-					vscode.window.showWarningMessage(`インポート完了: ${result.imported}件 (エラー: ${result.errors.join(', ')})`);
-				} else {
-					vscode.window.showInformationMessage(`${result.imported}件のプロンプトをインポートしました`);
-				}
+				// インポート完了
 			}
 		} catch (error) {
-			vscode.window.showErrorMessage(`インポートに失敗しました: ${(error as Error).message}`);
+			// インポートに失敗しました
 		}
 	});
 
@@ -1164,16 +1494,13 @@ export function activate(context: vscode.ExtensionContext) {
 				'📊 Prompt Template Manager 統計',
 				'',
 				`📝 総プロンプト数: ${stats.totalCount}`,
-				`🆕 今日作成: ${stats.todayCreated}`,
-				`📈 今週更新: ${stats.weeklyUsage}`,
 				`💾 ストレージ使用量: ${storageInfo.storageSize}`,
-				`🏷️ 人気タグ: ${stats.popularTags.map(t => `${t.tag}(${t.count})`).join(', ') || 'なし'}`,
 				stats.mostUsedPrompt ? `⭐ 最多使用: "${stats.mostUsedPrompt.title}" (${stats.mostUsedPrompt.usageCount}回)` : ''
 			].filter(line => line !== '').join('\n');
 			
-			vscode.window.showInformationMessage(message, { modal: true });
+			// 統計情報の表示
 		} catch (error) {
-			vscode.window.showErrorMessage(`統計の取得に失敗しました: ${(error as Error).message}`);
+			// 統計の取得に失敗しました
 		}
 	});
 
@@ -1195,7 +1522,7 @@ export function activate(context: vscode.ExtensionContext) {
 		]);
 	} catch (error) {
 		console.error('コマンド登録エラー:', error);
-		vscode.window.showErrorMessage(`コマンドの登録に失敗しました: ${(error as Error).message}`);
+		// コマンドの登録に失敗しました
 	}
 }
 
@@ -1233,13 +1560,11 @@ class PromptManager {
 			const integrityErrors = PromptValidator.validateStorageIntegrity(this.prompts);
 			if (integrityErrors.length > 0) {
 				console.warn('データ整合性の問題が検出されました:', integrityErrors);
-				vscode.window.showWarningMessage(
-					`プロンプトデータに${integrityErrors.length}件の整合性の問題が検出されました。データの確認をお勧めします。`
-				);
+				// プロンプトデータに整合性の問題が検出されました
 			}
 		} catch (error) {
 			console.error('プロンプトデータの読み込みに失敗しました:', error);
-			vscode.window.showErrorMessage('プロンプトデータの読み込みに失敗しました。空のリストで開始します。');
+			// プロンプトデータの読み込みに失敗しました。空のリストで開始します。
 			this.prompts = [];
 		}
 	}
@@ -1260,8 +1585,7 @@ class PromptManager {
 	async addPrompt(input: PromptInput): Promise<PromptData | null> {
 		const errors = PromptValidator.validatePromptInput(input, this.prompts);
 		if (errors.length > 0) {
-			const errorMessages = errors.map(e => e.message).join('\n');
-			vscode.window.showErrorMessage(`入力エラー:\n${errorMessages}`);
+			// 入力エラー
 			return null;
 		}
 
@@ -1276,53 +1600,20 @@ class PromptManager {
 			} else {
 				// 保存に失敗した場合はメモリからも削除
 				this.prompts.pop();
-				vscode.window.showErrorMessage('プロンプトの保存に失敗しました。しばらく後に再試行してください。');
+				// プロンプトの保存に失敗しました。しばらく後に再試行してください。
 				return null;
 			}
 		} catch (error) {
 			// 保存中に例外が発生した場合
 			this.prompts.pop();
 			console.error('プロンプト保存中にエラーが発生:', error);
-			vscode.window.showErrorMessage(`プロンプトの保存中にエラーが発生しました: ${(error as Error).message}`);
+			// プロンプトの保存中にエラーが発生しました
 			return null;
 		}
 	}
 
 	// プロンプトを編集
-	async editPrompt(id: string, input: PromptInput): Promise<boolean> {
-		const errors = PromptValidator.validatePromptInput(input, this.prompts, id);
-		if (errors.length > 0) {
-			const errorMessages = errors.map(e => e.message).join('\n');
-			vscode.window.showErrorMessage(`入力エラー:\n${errorMessages}`);
-			return false;
-		}
 
-		const index = this.prompts.findIndex(p => p.id === id);
-		if (index !== -1) {
-			const originalPrompt = { ...this.prompts[index] };
-			this.prompts[index] = PromptUtils.updatePromptData(this.prompts[index], input);
-			
-			try {
-				const saved = await this.savePrompts();
-				if (saved) {
-					console.log(`プロンプト "${input.title}" が正常に更新されました`);
-					return true;
-				} else {
-					// 保存に失敗した場合は元に戻す
-					this.prompts[index] = originalPrompt;
-					vscode.window.showErrorMessage('プロンプトの更新保存に失敗しました。しばらく後に再試行してください。');
-					return false;
-				}
-			} catch (error) {
-				// 保存中に例外が発生した場合は元に戻す
-				this.prompts[index] = originalPrompt;
-				console.error('プロンプト更新保存中にエラーが発生:', error);
-				vscode.window.showErrorMessage(`プロンプトの更新中にエラーが発生しました: ${(error as Error).message}`);
-				return false;
-			}
-		}
-		return false;
-	}
 
 	// プロンプトを削除
 	async deletePrompt(id: string): Promise<boolean> {
@@ -1338,14 +1629,14 @@ class PromptManager {
 				} else {
 					// 保存に失敗した場合は元に戻す
 					this.prompts.splice(index, 0, removedPrompt);
-					vscode.window.showErrorMessage('プロンプトの削除保存に失敗しました。しばらく後に再試行してください。');
+					// プロンプトの削除保存に失敗しました。しばらく後に再試行してください。
 					return false;
 				}
 			} catch (error) {
 				// 保存中に例外が発生した場合は元に戻す
 				this.prompts.splice(index, 0, removedPrompt);
 				console.error('プロンプト削除保存中にエラーが発生:', error);
-				vscode.window.showErrorMessage(`プロンプトの削除中にエラーが発生しました: ${(error as Error).message}`);
+				// プロンプトの削除中にエラーが発生しました
 				return false;
 			}
 		}
@@ -1392,15 +1683,37 @@ class PromptManager {
 		);
 	}
 
-	// お気に入りを切り替え
-	async toggleFavorite(id: string): Promise<boolean> {
-		const prompt = this.prompts.find(p => p.id === id);
-		if (prompt) {
-			prompt.isFavorite = !prompt.isFavorite;
-			return await this.savePrompts();
+	// 高度な検索機能
+	advancedSearch(query: string, options: any = {}): PromptData[] {
+		let results = this.getPrompts();
+
+		// テキスト検索
+		if (query && query.trim().length > 0) {
+			results = results.filter(prompt => 
+				PromptUtils.matchesSearchQuery(prompt, query)
+			);
 		}
-		return false;
+
+		// お気に入りフィルタ
+		if (options.favoritesOnly) {
+			results = results.filter(prompt => prompt.isFavorite);
+		}
+
+		// 優先度フィルタ
+		if (options.priority && options.priority > 0) {
+			results = results.filter(prompt => prompt.priority === options.priority);
+		}
+
+		// 使用回数フィルタ
+		if (options.minUsageCount !== undefined) {
+			results = results.filter(prompt => prompt.usageCount >= options.minUsageCount);
+		}
+
+		console.log(`検索結果: ${results.length}件`);
+		return results;
 	}
+
+
 
 	// プロンプトをアーカイブ/復元
 	async toggleArchive(id: string): Promise<boolean> {
@@ -1503,32 +1816,7 @@ class PromptManager {
 
 	// 統計情報を取得
 	getStats() {
-		const now = new Date();
-		const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-		const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
-
 		const totalCount = this.prompts.filter(p => !p.isArchived).length;
-		const todayCreated = this.prompts.filter(p => 
-			!p.isArchived && p.createdAt >= today
-		).length;
-		const weeklyUsage = this.prompts.filter(p => 
-			!p.isArchived && p.updatedAt >= weekAgo
-		).length;
-
-		// タグ使用頻度
-		const tagCounts = new Map<string, number>();
-		this.prompts.forEach(prompt => {
-			if (!prompt.isArchived) {
-				prompt.tags.forEach(tag => {
-					tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
-				});
-			}
-		});
-
-		const popularTags = Array.from(tagCounts.entries())
-			.map(([tag, count]) => ({ tag, count }))
-			.sort((a, b) => b.count - a.count)
-			.slice(0, 5);
 
 		// 最も使用頻度の高いプロンプト
 		const mostUsedPrompt = this.prompts
@@ -1537,9 +1825,8 @@ class PromptManager {
 
 		return {
 			totalCount,
-			todayCreated,
-			weeklyUsage,
-			popularTags,
+			todayCreated: 0, // 作成日がないため0固定
+			weeklyUsage: 0, // 更新日がないため0固定
 			mostUsedPrompt
 		};
 	}

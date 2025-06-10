@@ -20,32 +20,41 @@ export class PromptStorage {
      */
     async loadPrompts(): Promise<PromptData[]> {
         try {
-            // メインデータの読み込み試行
-            const mainData = await this.loadFromStorage(this.STORAGE_KEY);
-            if (mainData) {
-                await this.performMigrationIfNeeded(mainData);
-                return this.deserializePrompts(mainData.prompts || []);
+            const data = await this.loadFromStorage(this.STORAGE_KEY);
+            
+            if (!data) {
+                // 初回起動時：空のデータで初期化
+                await this.initializeStorage();
+                return [];
             }
 
-            // メインデータが無い場合はバックアップを試行
-            const backupData = await this.loadFromStorage(this.BACKUP_KEY);
-            if (backupData) {
-                console.warn('メインデータが見つからないため、バックアップから復元しています');
-                vscode.window.showWarningMessage('プロンプトデータをバックアップから復元しました');
-                
-                // バックアップをメインに復元
-                await this.saveToStorage(this.STORAGE_KEY, backupData);
-                return this.deserializePrompts(backupData.prompts || []);
-            }
+            // マイグレーションが必要な場合は実行
+            await this.performMigrationIfNeeded(data);
 
-            // 新規ユーザーの場合
-            console.log('新規ユーザー: 空のプロンプトリストで初期化');
-            await this.initializeStorage();
-            return [];
+            // プロンプトデータを復元
+            const prompts = this.deserializePrompts(data.prompts);
+            
+            console.log(`${prompts.length}件のプロンプトを正常に読み込みました`);
+            return prompts;
 
         } catch (error) {
             console.error('プロンプトデータの読み込みに失敗:', error);
-            vscode.window.showErrorMessage('プロンプトデータの読み込みに失敗しました。空のリストで開始します。');
+            
+            // バックアップから復元を試行
+            try {
+                const backupData = await this.loadFromStorage(this.BACKUP_KEY);
+                if (backupData) {
+                    console.log('バックアップからプロンプトデータを復元します');
+                    const prompts = this.deserializePrompts(backupData.prompts);
+                    // メインデータの読み込みに失敗したため、バックアップから復元しました
+                    return prompts;
+                }
+            } catch (backupError) {
+                console.error('バックアップの復元にも失敗:', backupError);
+            }
+            
+            // すべて失敗した場合は空の配列を返す
+            // プロンプトデータの読み込みに失敗しました。空のリストで開始します。
             return [];
         }
     }
@@ -57,8 +66,6 @@ export class PromptStorage {
         try {
             const serializedData: SerializedPromptCollection = {
                 prompts: prompts.map(prompt => PromptUtils.serializePromptData(prompt)),
-                availableTags: this.extractUniqueTags(prompts),
-                lastUpdated: new Date().toISOString(),
                 version: PROMPT_CONSTANTS.DATA_VERSION
             };
 
@@ -74,7 +81,7 @@ export class PromptStorage {
 
         } catch (error) {
             console.error('プロンプトデータの保存に失敗:', error);
-            vscode.window.showErrorMessage('プロンプトデータの保存に失敗しました');
+            // プロンプトデータの保存に失敗しました
             return false;
         }
     }
@@ -116,9 +123,7 @@ export class PromptStorage {
                 // IDの重複を避けるため、新しいIDを生成
                 return {
                     ...promptData,
-                    id: PromptUtils.generateId(),
-                    createdAt: new Date(promptData.createdAt),
-                    updatedAt: new Date(promptData.updatedAt)
+                    id: PromptUtils.generateId()
                 } as PromptData;
             });
 
@@ -136,8 +141,6 @@ export class PromptStorage {
     private async initializeStorage(): Promise<void> {
         const initialData: SerializedPromptCollection = {
             prompts: [],
-            availableTags: [],
-            lastUpdated: new Date().toISOString(),
             version: PROMPT_CONSTANTS.DATA_VERSION
         };
 
@@ -196,10 +199,10 @@ export class PromptStorage {
                 await this.saveToStorage(this.STORAGE_KEY, migratedData);
                 await this.context.globalState.update(this.MIGRATION_KEY, PROMPT_CONSTANTS.DATA_VERSION);
                 
-                vscode.window.showInformationMessage('プロンプトデータを最新バージョンに更新しました');
+                // プロンプトデータを最新バージョンに更新しました
             } catch (error) {
                 console.error('マイグレーションに失敗:', error);
-                vscode.window.showWarningMessage('データの更新に失敗しました。古い形式のまま使用します。');
+                // データの更新に失敗しました。古い形式のまま使用します。
             }
         }
     }
@@ -218,7 +221,6 @@ export class PromptStorage {
 
         // 最新バージョンに更新
         migratedData.version = PROMPT_CONSTANTS.DATA_VERSION;
-        migratedData.lastUpdated = new Date().toISOString();
 
         return migratedData;
     }
@@ -227,50 +229,37 @@ export class PromptStorage {
      * v1.0.0へのマイグレーション
      */
     private async migrateTo100(data: SerializedPromptCollection): Promise<SerializedPromptCollection> {
-        // 古い形式のプロンプトデータに新しいフィールドを追加
-        const migratedPrompts = data.prompts.map(prompt => ({
-            ...prompt,
-            tags: prompt.tags || [],
-            priority: prompt.priority || PROMPT_CONSTANTS.DEFAULT_PRIORITY,
-            isFavorite: prompt.isFavorite || false,
-            isArchived: prompt.isArchived || false,
-            variables: prompt.variables || []
-        }));
+        // 古い形式のプロンプトデータから不要なフィールドを除去
+        const migratedPrompts = data.prompts.map(prompt => {
+            const { tags, createdAt, updatedAt, description, ...coreFields } = prompt as any;
+            return {
+                ...coreFields,
+                priority: prompt.priority || PROMPT_CONSTANTS.DEFAULT_PRIORITY,
+                isFavorite: prompt.isFavorite || false,
+                isArchived: prompt.isArchived || false,
+                variables: prompt.variables || []
+            };
+        });
 
         return {
-            ...data,
             prompts: migratedPrompts,
-            availableTags: this.extractUniqueTagsFromSerialized(migratedPrompts)
+            version: PROMPT_CONSTANTS.DATA_VERSION
         };
-    }
-
-    /**
-     * プロンプトからユニークなタグを抽出
-     */
-    private extractUniqueTags(prompts: PromptData[]): string[] {
-        const allTags = prompts.flatMap(prompt => prompt.tags);
-        return Array.from(new Set(allTags)).sort();
-    }
-
-    /**
-     * シリアライズされたプロンプトからユニークなタグを抽出
-     */
-    private extractUniqueTagsFromSerialized(prompts: any[]): string[] {
-        const allTags = prompts.flatMap(prompt => prompt.tags || []);
-        return Array.from(new Set(allTags)).sort();
     }
 
     /**
      * バージョンの互換性をチェック
      */
     private isCompatibleVersion(version: string): boolean {
-        const majorVersion = version.split('.')[0];
-        const currentMajorVersion = PROMPT_CONSTANTS.DATA_VERSION.split('.')[0];
-        return majorVersion === currentMajorVersion;
+        // 現在のバージョンと同じか、マイナーバージョンが異なる場合は互換性あり
+        const current = PROMPT_CONSTANTS.DATA_VERSION.split('.').map(Number);
+        const target = version.split('.').map(Number);
+        
+        return current[0] === target[0]; // メジャーバージョンが同じなら互換性あり
     }
 
     /**
-     * バージョンを比較（-1: a < b, 0: a = b, 1: a > b）
+     * バージョン比較（a < b なら負の数、a > b なら正の数、a === b なら0）
      */
     private compareVersions(a: string, b: string): number {
         const parseVersion = (version: string) => 
@@ -280,28 +269,28 @@ export class PromptStorage {
         const versionB = parseVersion(b);
         
         for (let i = 0; i < Math.max(versionA.length, versionB.length); i++) {
-            const partA = versionA[i] || 0;
-            const partB = versionB[i] || 0;
+            const numA = versionA[i] || 0;
+            const numB = versionB[i] || 0;
             
-            if (partA < partB) return -1;
-            if (partA > partB) return 1;
+            if (numA < numB) return -1;
+            if (numA > numB) return 1;
         }
         
         return 0;
     }
 
     /**
-     * ストレージの使用量を取得
+     * ストレージ情報を取得
      */
     async getStorageInfo(): Promise<{ totalPrompts: number; storageSize: string; lastBackup: string | null }> {
         try {
-            const data = await this.loadFromStorage(this.STORAGE_KEY);
+            const mainData = await this.loadFromStorage(this.STORAGE_KEY);
             const backupData = await this.loadFromStorage(this.BACKUP_KEY);
             
-            const totalPrompts = data?.prompts?.length || 0;
-            const storageSize = this.calculateStorageSize(data);
-            const lastBackup = backupData?.lastUpdated || null;
-
+            const totalPrompts = mainData ? mainData.prompts.length : 0;
+            const storageSize = this.calculateStorageSize(mainData);
+            const lastBackup = backupData ? '利用可能' : null;
+            
             return {
                 totalPrompts,
                 storageSize,
@@ -321,27 +310,31 @@ export class PromptStorage {
      * ストレージサイズを計算
      */
     private calculateStorageSize(data: SerializedPromptCollection | null): string {
-        if (!data) return '0 KB';
+        if (!data) return '0KB';
         
-        const jsonString = JSON.stringify(data);
-        const sizeInBytes = new Blob([jsonString]).size;
-        
-        if (sizeInBytes < 1024) {
-            return `${sizeInBytes} B`;
-        } else if (sizeInBytes < 1024 * 1024) {
-            return `${(sizeInBytes / 1024).toFixed(1)} KB`;
-        } else {
-            return `${(sizeInBytes / (1024 * 1024)).toFixed(1)} MB`;
+        try {
+            const jsonString = JSON.stringify(data);
+            const sizeInBytes = new Blob([jsonString]).size;
+            const sizeInKB = Math.round(sizeInBytes / 1024 * 100) / 100;
+            
+            if (sizeInKB < 1024) {
+                return `${sizeInKB}KB`;
+            } else {
+                const sizeInMB = Math.round(sizeInKB / 1024 * 100) / 100;
+                return `${sizeInMB}MB`;
+            }
+        } catch (error) {
+            console.error('ストレージサイズの計算に失敗:', error);
+            return '計算不可';
         }
     }
 
     /**
-     * ストレージをクリア（開発・テスト用）
+     * ストレージをクリア
      */
     async clearStorage(): Promise<void> {
         await this.context.globalState.update(this.STORAGE_KEY, undefined);
         await this.context.globalState.update(this.BACKUP_KEY, undefined);
         await this.context.globalState.update(this.MIGRATION_KEY, undefined);
-        console.log('ストレージをクリアしました');
     }
 } 
