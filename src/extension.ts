@@ -154,6 +154,7 @@ class PromptTemplatePanel {
 				break;
 
 			case 'createPrompt':
+				console.log('createPrompt メッセージを受信しました');
 				await this._createDefaultPrompt();
 				break;
 
@@ -202,11 +203,27 @@ class PromptTemplatePanel {
 		}
 	}
 
+	private _generateUniqueTitle(baseTitle: string): string {
+		const existingPrompts = this.promptManager.getPrompts();
+		const existingTitles = existingPrompts.map(p => p.title.toLowerCase());
+		
+		let title = baseTitle;
+		let counter = 1;
+		
+		while (existingTitles.includes(title.toLowerCase())) {
+			title = `${baseTitle} ${counter}`;
+			counter++;
+		}
+		
+		return title;
+	}
+
 	private async _createDefaultPrompt() {
 		console.log('新しいプロンプトを自動作成');
 		
-		// デフォルトのタイトルとコンテンツで自動作成
-		const title = 'title';
+		// デフォルトのタイトルとコンテンツで自動作成（重複しないようにユニークなタイトルを生成）
+		const baseTitle = 'title';
+		const title = this._generateUniqueTitle(baseTitle);
 		const content = 'prompt';
 
 		console.log(`プロンプト作成中: タイトル="${title}", 内容="${content}"`);
@@ -229,7 +246,7 @@ class PromptTemplatePanel {
 				prompt: result
 			});
 		} else {
-			console.log('プロンプト作成失敗');
+			console.error('プロンプト作成失敗 - addPromptメソッドがnullを返しました');
 		}
 	}
 
@@ -1547,7 +1564,9 @@ class PromptTemplatePanel {
 		
 		// 新しいプロンプトを作成
 		function createPrompt() {
+			console.log('createPrompt 関数が呼び出されました');
 			vscode.postMessage({ type: 'createPrompt' });
+			console.log('createPrompt メッセージを送信しました');
 		}
 		
 		// プロンプトを削除
@@ -1870,9 +1889,10 @@ class PromptManager {
 
 	// プロンプトを追加
 	async addPrompt(input: PromptInput): Promise<PromptData | null> {
+		console.log('addPrompt メソッドが呼び出されました:', input);
 		const errors = PromptValidator.validatePromptInput(input, this.prompts);
 		if (errors.length > 0) {
-			// 入力エラー
+			console.error('入力バリデーションエラー:', errors);
 			return null;
 		}
 
