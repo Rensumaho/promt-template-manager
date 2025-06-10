@@ -169,6 +169,10 @@ class PromptTemplatePanel {
 				await this._executePrompt(message.content);
 				break;
 
+			case 'updatePrompt':
+				await this._updatePrompt(message.id, message.updates);
+				break;
+
 			default:
 				console.warn('Unknown message type:', message.type);
 		}
@@ -230,6 +234,22 @@ class PromptTemplatePanel {
 	private async _executePrompt(content: string) {
 		// ここで実際のAIチャット入力欄への挿入処理を実装
 		await vscode.env.clipboard.writeText(content);
+	}
+
+	private async _updatePrompt(id: string, updates: any) {
+		const success = await this.promptManager.updatePrompt(id, updates);
+		if (success) {
+			await this._sendPromptsToWebview();
+			
+			// 更新されたプロンプトの詳細を再表示
+			const updatedPrompt = this.promptManager.getPrompts().find(p => p.id === id);
+			if (updatedPrompt) {
+				await this._panel.webview.postMessage({
+					type: 'showPromptDetail',
+					prompt: updatedPrompt
+				});
+			}
+		}
 	}
 
 	private _update() {
@@ -469,6 +489,43 @@ class PromptTemplatePanel {
 			line-height: 1.5;
 			white-space: pre-wrap;
 			word-wrap: break-word;
+		}
+		
+		.editable {
+			cursor: pointer;
+			border: 1px solid transparent;
+			border-radius: 3px;
+			padding: 4px;
+			transition: all 0.2s ease;
+		}
+		
+		.editable:hover {
+			background-color: var(--vscode-list-hoverBackground);
+			border-color: var(--vscode-input-border);
+		}
+		
+		.editing {
+			background-color: var(--vscode-input-background);
+			border-color: var(--vscode-focusBorder);
+			cursor: text;
+		}
+		
+		.edit-input {
+			width: 100%;
+			background: var(--vscode-input-background);
+			color: var(--vscode-input-foreground);
+			border: 1px solid var(--vscode-focusBorder);
+			border-radius: 3px;
+			padding: 4px 8px;
+			font-size: inherit;
+			font-family: inherit;
+			resize: none;
+			outline: none;
+		}
+		
+		.edit-textarea {
+			min-height: 100px;
+			font-family: var(--vscode-editor-font-family);
 		}
 		
 		.variable-highlight {
@@ -1127,14 +1184,14 @@ class PromptTemplatePanel {
 			
 			detailElement.innerHTML = \`
 				<div class="detail-header">
-					<h2 class="detail-title">\${prompt.isFavorite ? '⭐ ' : ''}\${escapeHtml(prompt.title)}</h2>
+					<h2 class="detail-title editable" onclick="startEditTitle()" title="クリックして編集">\${prompt.isFavorite ? '⭐ ' : ''}\${escapeHtml(prompt.title)}</h2>
 					<div class="detail-actions">
 						<button class="action-button" onclick="deletePrompt('\${prompt.id}')">🗑️</button>
 						<button class="action-button" onclick="copyPrompt('\${prompt.id}')">📋</button>
 					</div>
 				</div>
 				
-				<div class="detail-content">\${highlightedContent}</div>
+				<div class="detail-content editable" onclick="startEditContent()" title="クリックして編集">\${highlightedContent}</div>
 				
 				<div class="detail-meta">
 					<div class="meta-item">
@@ -1225,6 +1282,142 @@ class PromptTemplatePanel {
 		// プロンプトを検索
 		function searchPrompts(query) {
 			vscode.postMessage({ type: 'searchPrompts', query });
+		}
+		
+		// タイトル編集を開始
+		function startEditTitle() {
+			if (!selectedPrompt) return;
+			
+			const titleElement = document.querySelector('.detail-title');
+			if (!titleElement || titleElement.classList.contains('editing')) return;
+			
+			const currentTitle = selectedPrompt.title;
+			const favoriteIcon = selectedPrompt.isFavorite ? '⭐ ' : '';
+			
+			titleElement.classList.add('editing');
+			titleElement.innerHTML = \`
+				\${favoriteIcon}<input 
+					type="text" 
+					class="edit-input" 
+					value="\${escapeHtml(currentTitle)}" 
+					onblur="saveTitle(this.value)"
+					onkeydown="handleTitleKeydown(event, this.value)"
+					style="display: inline-block; width: auto; min-width: 200px;"
+				/>
+			\`;
+			
+			const input = titleElement.querySelector('.edit-input');
+			input.focus();
+			input.select();
+		}
+		
+		// コンテンツ編集を開始
+		function startEditContent() {
+			if (!selectedPrompt) return;
+			
+			const contentElement = document.querySelector('.detail-content');
+			if (!contentElement || contentElement.classList.contains('editing')) return;
+			
+			const currentContent = selectedPrompt.content;
+			
+			contentElement.classList.add('editing');
+			contentElement.innerHTML = \`
+				<textarea 
+					class="edit-input edit-textarea" 
+					onblur="saveContent(this.value)"
+					onkeydown="handleContentKeydown(event)"
+				>\${escapeHtml(currentContent)}</textarea>
+			\`;
+			
+			const textarea = contentElement.querySelector('.edit-textarea');
+			textarea.focus();
+		}
+		
+		// タイトル保存
+		function saveTitle(newTitle) {
+			if (!selectedPrompt) return;
+			
+			newTitle = newTitle.trim();
+			if (newTitle === '' || newTitle === selectedPrompt.title) {
+				cancelTitleEdit();
+				return;
+			}
+			
+			vscode.postMessage({ 
+				type: 'updatePrompt', 
+				id: selectedPrompt.id,
+				updates: { title: newTitle }
+			});
+			
+			// 暫定的に表示を更新
+			selectedPrompt.title = newTitle;
+			cancelTitleEdit();
+		}
+		
+		// コンテンツ保存
+		function saveContent(newContent) {
+			if (!selectedPrompt) return;
+			
+			if (newContent.trim() === '' || newContent === selectedPrompt.content) {
+				cancelContentEdit();
+				return;
+			}
+			
+			vscode.postMessage({ 
+				type: 'updatePrompt', 
+				id: selectedPrompt.id,
+				updates: { content: newContent }
+			});
+			
+			// 暫定的に表示を更新
+			selectedPrompt.content = newContent;
+			cancelContentEdit();
+		}
+		
+		// タイトル編集キャンセル
+		function cancelTitleEdit() {
+			if (!selectedPrompt) return;
+			
+			const titleElement = document.querySelector('.detail-title');
+			if (!titleElement) return;
+			
+			titleElement.classList.remove('editing');
+			const favoriteIcon = selectedPrompt.isFavorite ? '⭐ ' : '';
+			titleElement.innerHTML = \`\${favoriteIcon}\${escapeHtml(selectedPrompt.title)}\`;
+		}
+		
+		// コンテンツ編集キャンセル
+		function cancelContentEdit() {
+			if (!selectedPrompt) return;
+			
+			const contentElement = document.querySelector('.detail-content');
+			if (!contentElement) return;
+			
+			contentElement.classList.remove('editing');
+			const highlightedContent = highlightVariables(selectedPrompt.content);
+			contentElement.innerHTML = highlightedContent;
+		}
+		
+		// タイトル編集時のキーボード処理
+		function handleTitleKeydown(event, value) {
+			if (event.key === 'Enter') {
+				event.preventDefault();
+				saveTitle(value);
+			} else if (event.key === 'Escape') {
+				event.preventDefault();
+				cancelTitleEdit();
+			}
+		}
+		
+		// コンテンツ編集時のキーボード処理
+		function handleContentKeydown(event) {
+			if (event.key === 'Escape') {
+				event.preventDefault();
+				cancelContentEdit();
+			} else if (event.ctrlKey && event.key === 'Enter') {
+				event.preventDefault();
+				saveContent(event.target.value);
+			}
 		}
 
 
@@ -1613,7 +1806,46 @@ class PromptManager {
 	}
 
 	// プロンプトを編集
+	async updatePrompt(id: string, updates: Partial<{ title: string; content: string }>): Promise<boolean> {
+		const prompt = this.prompts.find(p => p.id === id);
+		if (!prompt) {
+			console.error(`更新対象のプロンプトが見つかりません: ID=${id}`);
+			return false;
+		}
 
+		// 更新前の値を保存
+		const oldTitle = prompt.title;
+		const oldContent = prompt.content;
+
+		try {
+			// 更新を適用
+			if (updates.title !== undefined) {
+				prompt.title = updates.title;
+			}
+			if (updates.content !== undefined) {
+				prompt.content = updates.content;
+			}
+
+			// 保存
+			const saved = await this.savePrompts();
+			if (saved) {
+				console.log(`プロンプト "${prompt.title}" が正常に更新されました`);
+				return true;
+			} else {
+				// 保存に失敗した場合は元に戻す
+				prompt.title = oldTitle;
+				prompt.content = oldContent;
+				console.error(`プロンプト更新の保存に失敗: ID=${id}`);
+				return false;
+			}
+		} catch (error) {
+			// 例外が発生した場合は元に戻す
+			prompt.title = oldTitle;
+			prompt.content = oldContent;
+			console.error(`プロンプト更新中にエラーが発生: ID=${id}`, error);
+			return false;
+		}
+	}
 
 	// プロンプトを削除
 	async deletePrompt(id: string): Promise<boolean> {
