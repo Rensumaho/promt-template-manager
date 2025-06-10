@@ -83,11 +83,13 @@ class PromptTemplatePanel {
 	}
 
 	private async _sendPromptsToWebview() {
-		const prompts = this.promptManager.getPrompts();
+		const prompts = this.promptManager.getCurrentDisplayPrompts();
 		console.log(`WebViewにプロンプトを送信: ${prompts.length}件`, prompts);
 		await this._panel.webview.postMessage({
 			type: 'updatePrompts',
-			prompts: prompts
+			prompts: prompts,
+			selectedPromptId: this.promptManager.getSelectedPromptId(),
+			isSearching: this.promptManager.isSearching()
 		});
 	}
 
@@ -95,6 +97,9 @@ class PromptTemplatePanel {
 		switch (message.type) {
 			case 'ready':
 				// Webview初期化完了時にデータを送信
+				// ウィンドウ再開時は選択状態と検索状態をクリア
+				this.promptManager.setSelectedPrompt(null);
+				this.promptManager.clearSearchState();
 				await this._sendPromptsToWebview();
 				break;
 
@@ -103,10 +108,22 @@ class PromptTemplatePanel {
 				const searchOptions = message.options || {};
 				console.log(`検索実行: クエリ="${searchQuery}", オプション:`, searchOptions);
 				
-				const searchResults = this.promptManager.advancedSearch(searchQuery, searchOptions);
+				// 検索時は選択状態をクリア
+				this.promptManager.setSelectedPrompt(null);
+				
+				// 検索状態を設定
+				if (searchQuery && searchQuery.trim() !== '') {
+					this.promptManager.setSearchState(searchQuery, searchOptions);
+				} else {
+					this.promptManager.clearSearchState();
+				}
+				
+				const searchResults = this.promptManager.getCurrentDisplayPrompts();
 				await this._panel.webview.postMessage({
 					type: 'updatePrompts',
 					prompts: searchResults,
+					selectedPromptId: this.promptManager.getSelectedPromptId(),
+					isSearching: this.promptManager.isSearching(),
 					searchQuery: searchQuery,
 					searchHighlight: true
 				});
@@ -116,9 +133,16 @@ class PromptTemplatePanel {
 				const promptId = message.id;
 				console.log(`プロンプト選択: ID=${promptId}`);
 				
-				// 選択されたプロンプトデータを取得
-				const selectedPrompt = this.promptManager.getPrompts().find(p => p.id === promptId);
+				// 選択中プロンプトを設定
+				this.promptManager.setSelectedPrompt(promptId);
+				
+				// 選択されたプロンプトデータを取得（全プロンプトから検索）
+				const allPrompts = this.promptManager.getPrompts();
+				const selectedPrompt = allPrompts.find(p => p.id === promptId);
 				if (selectedPrompt) {
+					// プロンプト一覧を更新（検索状態を保持し、選択中プロンプトが上位に移動）
+					await this._sendPromptsToWebview();
+					
 					// プロンプト詳細を表示（使用回数は増加させない）
 					await this._panel.webview.postMessage({
 						type: 'showPromptDetail',
@@ -208,7 +232,15 @@ class PromptTemplatePanel {
 
 		if (result) {
 			console.log('プロンプト作成成功:', result);
+			// 新規作成したプロンプトを選択状態に
+			this.promptManager.setSelectedPrompt(result.id);
 			await this._sendPromptsToWebview();
+			
+			// 新規作成したプロンプトの詳細を表示
+			await this._panel.webview.postMessage({
+				type: 'showPromptDetail',
+				prompt: result
+			});
 		} else {
 			console.log('プロンプト作成失敗');
 		}
@@ -220,9 +252,20 @@ class PromptTemplatePanel {
 		const prompt = this.promptManager.getPrompts().find(p => p.id === id);
 		if (!prompt) return;
 
+		// 削除対象が選択中のプロンプトかどうかをチェック
+		const wasSelected = this.promptManager.isSelectedPrompt(id);
+
 		// 確認なしで削除
 		const success = await this.promptManager.deletePrompt(id);
 		if (success) {
+			// 選択中のプロンプトが削除された場合は選択をクリア
+			if (wasSelected) {
+				this.promptManager.setSelectedPrompt(null);
+				// 詳細パネルをクリア
+				await this._panel.webview.postMessage({
+					type: 'clearPromptDetail'
+				});
+			}
 			await this._sendPromptsToWebview();
 		}
 	}
@@ -391,6 +434,8 @@ class PromptTemplatePanel {
 		.prompt-item.selected {
 			background: var(--vscode-list-activeSelectionBackground);
 			border-color: var(--vscode-focusBorder);
+			color: var(--vscode-list-activeSelectionForeground);
+			box-shadow: 0 0 0 1px var(--vscode-focusBorder);
 		}
 		
 		.prompt-title {
@@ -1005,10 +1050,13 @@ class PromptTemplatePanel {
 			
 			switch (message.type) {
 				case 'updatePrompts':
-					updatePromptList(message.prompts);
+					updatePromptList(message.prompts, message.selectedPromptId, message.isSearching);
 					break;
 				case 'showPromptDetail':
 					showPromptDetail(message.prompt);
+					break;
+				case 'clearPromptDetail':
+					clearPromptDetail();
 					break;
 			}
 		});
@@ -1131,8 +1179,8 @@ class PromptTemplatePanel {
 		}
 		
 		// プロンプト一覧を更新
-		function updatePromptList(prompts) {
-			console.log('updatePromptList called with:', prompts);
+		function updatePromptList(prompts, selectedPromptId = null, isSearching = false) {
+			console.log('updatePromptList called with:', prompts, 'selectedId:', selectedPromptId, 'isSearching:', isSearching);
 			currentPrompts = prompts;
 			const listElement = document.getElementById('promptList');
 			
@@ -1148,19 +1196,22 @@ class PromptTemplatePanel {
 				return;
 			}
 			
-			listElement.innerHTML = prompts.map(prompt => \`
-				<div class="prompt-item" 
-					onclick="selectPrompt('\${prompt.id}')" 
-					data-id="\${prompt.id}">
-					<div class="prompt-title">
-						\${prompt.isFavorite ? '<span class="favorite-icon">⭐</span> ' : ''}\${escapeHtml(prompt.title)}
+			listElement.innerHTML = prompts.map(prompt => {
+				const isSelected = selectedPromptId === prompt.id;
+				return \`
+					<div class="prompt-item\${isSelected ? ' selected' : ''}" 
+						onclick="selectPrompt('\${prompt.id}')" 
+						data-id="\${prompt.id}">
+						<div class="prompt-title">
+							\${prompt.isFavorite ? '<span class="favorite-icon">⭐</span> ' : ''}\${escapeHtml(prompt.title)}
+						</div>
+						<div class="prompt-summary">\${escapeHtml(prompt.content.substring(0, 60))}\${prompt.content.length > 60 ? '...' : ''}</div>
+						<div class="prompt-meta">
+							<span>使用回数: <span class="usage-count">\${prompt.usageCount}</span></span>
+						</div>
 					</div>
-					<div class="prompt-summary">\${escapeHtml(prompt.content.substring(0, 60))}\${prompt.content.length > 60 ? '...' : ''}</div>
-					<div class="prompt-meta">
-						<span>使用回数: <span class="usage-count">\${prompt.usageCount}</span></span>
-					</div>
-				</div>
-			\`).join('');
+				\`;
+			}).join('');
 		}
 		
 		// プロンプトを選択
@@ -1282,6 +1333,28 @@ class PromptTemplatePanel {
 		// プロンプトを検索
 		function searchPrompts(query) {
 			vscode.postMessage({ type: 'searchPrompts', query });
+		}
+
+		// プロンプト詳細をクリア
+		function clearPromptDetail() {
+			selectedPrompt = null;
+			const detailElement = document.getElementById('promptDetail');
+			detailElement.innerHTML = \`
+				<div class="empty-state">
+					<div class="empty-icon">👈</div>
+					<div>左側からプロンプトを選択してください</div>
+				</div>
+			\`;
+			
+			// 変数パネルもクリア
+			const variableElement = document.getElementById('variablePanel');
+			variableElement.innerHTML = \`
+				<div class="empty-state">
+					<div class="empty-icon">⚙️</div>
+					<div>プロンプトを選択すると<br>変数設定が表示されます</div>
+					<div style="margin-top: 12px; font-size: 11px;">（レベル5で実装予定）</div>
+				</div>
+			\`;
 		}
 		
 		// タイトル編集を開始
@@ -1727,6 +1800,9 @@ class PromptManager {
 	private context: vscode.ExtensionContext;
 	private prompts: PromptData[] = [];
 	private storage: PromptStorage;
+	private selectedPromptId: string | null = null;
+	private currentSearchQuery: string | null = null;
+	private currentSearchOptions: any = {};
 
 	constructor(context: vscode.ExtensionContext) {
 		try {
@@ -1767,11 +1843,68 @@ class PromptManager {
 		return await this.storage.savePrompts(this.prompts);
 	}
 
-	// 使用回数順でソートされたプロンプト一覧を取得
+	// 選択中プロンプトを設定
+	setSelectedPrompt(promptId: string | null): void {
+		this.selectedPromptId = promptId;
+	}
+
+	// 指定したプロンプトが選択中かどうかを判定
+	isSelectedPrompt(promptId: string): boolean {
+		return this.selectedPromptId === promptId;
+	}
+
+	// 選択中プロンプトIDを取得
+	getSelectedPromptId(): string | null {
+		return this.selectedPromptId;
+	}
+
+	// 検索状態を設定
+	setSearchState(query: string | null, options: any = {}): void {
+		this.currentSearchQuery = query;
+		this.currentSearchOptions = options;
+	}
+
+	// 検索状態をクリア
+	clearSearchState(): void {
+		this.currentSearchQuery = null;
+		this.currentSearchOptions = {};
+	}
+
+	// 検索中かどうかを判定
+	isSearching(): boolean {
+		return this.currentSearchQuery !== null;
+	}
+
+	// 現在の表示用プロンプト一覧を取得（検索状態を考慮）
+	getCurrentDisplayPrompts(): PromptData[] {
+		if (this.isSearching()) {
+			return this.advancedSearch(this.currentSearchQuery!, this.currentSearchOptions);
+		}
+		return this.getPrompts();
+	}
+
+	// 使用回数順でソートされたプロンプト一覧を取得（選択中のプロンプトを最上位に）
 	getPrompts(): PromptData[] {
-		return this.prompts
-			.filter(prompt => !prompt.isArchived)
-			.sort((a, b) => b.usageCount - a.usageCount);
+		const filteredPrompts = this.prompts.filter(prompt => !prompt.isArchived);
+		
+		// 選択中のプロンプトがない場合は従来通りの使用回数降順
+		if (!this.selectedPromptId) {
+			return filteredPrompts.sort((a, b) => b.usageCount - a.usageCount);
+		}
+		
+		// 選択中のプロンプトを最上位に、その他は使用回数降順でソート
+		return filteredPrompts.sort((a, b) => {
+			// 選択中のプロンプトを最優先
+			if (a.id === this.selectedPromptId && b.id !== this.selectedPromptId) {
+				return -1;
+			}
+			if (b.id === this.selectedPromptId && a.id !== this.selectedPromptId) {
+				return 1;
+			}
+			
+			// 両方とも選択中でない場合、または両方とも選択中の場合は使用回数で比較
+			return b.usageCount - a.usageCount;
+		});
 	}
 
 	// プロンプトを追加
@@ -1917,7 +2050,10 @@ class PromptManager {
 
 	// 高度な検索機能
 	advancedSearch(query: string, options: any = {}): PromptData[] {
-		let results = this.getPrompts();
+		// フィルタリング用の全プロンプトを取得（選択状態のソートなし）
+		let results = this.prompts
+			.filter(prompt => !prompt.isArchived)
+			.sort((a, b) => b.usageCount - a.usageCount);
 
 		// テキスト検索
 		if (query && query.trim().length > 0) {
@@ -1939,6 +2075,22 @@ class PromptManager {
 		// 使用回数フィルタ
 		if (options.minUsageCount !== undefined) {
 			results = results.filter(prompt => prompt.usageCount >= options.minUsageCount);
+		}
+
+		// 検索結果でも選択中プロンプトを最上位に
+		if (this.selectedPromptId) {
+			results = results.sort((a, b) => {
+				// 選択中のプロンプトを最優先
+				if (a.id === this.selectedPromptId && b.id !== this.selectedPromptId) {
+					return -1;
+				}
+				if (b.id === this.selectedPromptId && a.id !== this.selectedPromptId) {
+					return 1;
+				}
+				
+				// 両方とも選択中でない場合、または両方とも選択中の場合は使用回数で比較
+				return b.usageCount - a.usageCount;
+			});
 		}
 
 		console.log(`検索結果: ${results.length}件`);
