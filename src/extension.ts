@@ -336,15 +336,21 @@ class PromptTemplatePanel {
 			padding: 16px;
 			overflow-y: auto;
 			height: 100%;
-		}
-		
-		.variable-panel {
-			flex: 0 0 280px;
-			padding: 16px;
-			overflow: hidden;
-			height: 100%;
 			display: flex;
 			flex-direction: column;
+		}
+		
+		.prompt-detail-section {
+			flex: 3;
+			overflow-y: auto;
+			margin-bottom: 16px;
+		}
+		
+		.variable-section {
+			flex: 2;
+			overflow-y: auto;
+			border-top: 1px solid var(--vscode-panel-border);
+			padding-top: 16px;
 		}
 		
 		.search-header {
@@ -497,13 +503,18 @@ class PromptTemplatePanel {
 		}
 		
 		.action-button {
-			background: var(--vscode-button-secondaryBackground);
-			color: var(--vscode-button-secondaryForeground);
+			background: none;
+			color: var(--vscode-foreground);
 			border: none;
-			padding: 6px 12px;
+			padding: 6px;
 			border-radius: 4px;
 			cursor: pointer;
-			font-size: 12px;
+			font-size: 16px;
+			min-width: 32px;
+			height: 32px;
+			display: flex;
+			align-items: center;
+			justify-content: center;
 		}
 		
 		.action-button:hover {
@@ -780,18 +791,7 @@ class PromptTemplatePanel {
 			display: none;
 		}
 
-		.container.variable-hidden .variable-panel {
-			flex: 0 0 auto;
-			width: 50px;
-		}
 
-		.container.variable-hidden #variablePanel {
-			display: none;
-		}
-
-		.container.variable-hidden .panel-header-title {
-			display: none;
-		}
 
 
 			.search-panel.collapsed {
@@ -826,13 +826,7 @@ class PromptTemplatePanel {
 				padding: 4px;
 			}
 			
-			.variable-panel {
-				flex: 1 !important;
-				width: 100% !important;
-				min-height: 20vh;
-				max-height: 30vh;
-				padding: 4px;
-			}
+
 			
 			.add-button {
 				font-size: 10px;
@@ -992,7 +986,7 @@ class PromptTemplatePanel {
 			</div>
 		</div>
 		
-		<!-- 中央: 詳細表示パネル -->
+		<!-- 右側: 詳細表示と変数設定パネル -->
 		<div class="panel detail-panel scrollbar" id="detailPanel">
 			<div class="search-header">
 				<h3 class="panel-header-title">📄 プロンプト詳細</h3>
@@ -1000,23 +994,20 @@ class PromptTemplatePanel {
 					👁️
 				</button>
 			</div>
-			<div id="promptDetail" style="flex: 1; overflow-y: auto;">
+			
+			<!-- プロンプト詳細セクション (3/5) -->
+			<div class="prompt-detail-section" id="promptDetail">
 				<div class="empty-state">
 					<div class="empty-icon">👈</div>
 					<div>左側からプロンプトを選択してください</div>
 				</div>
 			</div>
-		</div>
-		
-		<!-- 右側: 変数設定パネル -->
-		<div class="panel variable-panel scrollbar" id="variableContainer">
-			<div class="variable-header">
-				<h3 class="panel-header-title">⚙️ 変数設定</h3>
-				<button class="panel-toggle-btn" onclick="togglePanel('variable')" title="パネルの表示/非表示">
-					👁️
-				</button>
-			</div>
-			<div id="variablePanel" style="flex: 1; overflow-y: auto;">
+			
+			<!-- 変数設定セクション (2/5) -->
+			<div class="variable-section" id="variablePanel">
+				<div class="variable-header">
+					<h3 class="variable-title">⚙️ 変数設定</h3>
+				</div>
 				<div class="empty-state">
 					<div class="empty-icon">⚙️</div>
 					<div>プロンプトを選択すると<br>変数設定が表示されます</div>
@@ -1224,8 +1215,9 @@ class PromptTemplatePanel {
 				<div class="detail-header">
 					<h2 class="detail-title editable" onclick="startEditTitle()" title="クリックして編集">\${prompt.isFavorite ? '⭐ ' : ''}\${escapeHtml(prompt.title)}</h2>
 					<div class="detail-actions">
-						<button class="action-button" onclick="deletePrompt('\${prompt.id}')">🗑️</button>
-						<button class="action-button" onclick="copyPrompt('\${prompt.id}')">📋</button>
+						<button class="action-button" onclick="deletePrompt('\${prompt.id}')" title="削除">🗑️</button>
+						<button class="action-button" onclick="copyPrompt('\${prompt.id}')" title="コピー">📋</button>
+						<button class="action-button" onclick="executePrompt()" title="実行">▶️</button>
 					</div>
 				</div>
 				
@@ -1263,9 +1255,6 @@ class PromptTemplatePanel {
 					<div class="empty-state">
 						<div class="empty-icon">✅</div>
 						<div>このプロンプトには<br>変数がありません</div>
-						<button class="execute-button" onclick="executePrompt()">
-							🚀 プロンプトを実行
-						</button>
 					</div>
 				\`;
 			} else {
@@ -1279,14 +1268,12 @@ class PromptTemplatePanel {
 									class="variable-input" 
 									id="var_\${variable}"
 									placeholder="値を入力..."
-									oninput="updateExecuteButton()"
+
 								/>
 							</div>
 						\`).join('')}
 					</div>
-					<button class="execute-button" id="executeBtn" onclick="executePrompt()" disabled>
-						🚀 プロンプトを実行
-					</button>
+
 				\`;
 			}
 		}
@@ -1306,16 +1293,7 @@ class PromptTemplatePanel {
 			return variables;
 		}
 		
-		// 実行ボタンの状態を更新
-		function updateExecuteButton() {
-			const executeBtn = document.getElementById('executeBtn');
-			if (!executeBtn) return;
-			
-			const inputs = document.querySelectorAll('.variable-input');
-			const allFilled = Array.from(inputs).every(input => input.value.trim() !== '');
-			
-			executeBtn.disabled = !allFilled;
-		}
+
 		
 		// プロンプトを検索
 		function searchPrompts(query) {
@@ -1549,11 +1527,7 @@ class PromptTemplatePanel {
 					panelName = 'プロンプト詳細';
 					buttonSelector = '#detailPanel .panel-toggle-btn';
 					break;
-				case 'variable':
-					className = 'variable-hidden';
-					panelName = '変数設定';
-					buttonSelector = '#variableContainer .panel-toggle-btn';
-					break;
+				
 				default:
 					return;
 			}
