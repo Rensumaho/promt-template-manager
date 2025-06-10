@@ -154,7 +154,7 @@ class PromptTemplatePanel {
 				break;
 
 			case 'createPrompt':
-				await this._showCreatePromptDialog();
+				await this._createDefaultPrompt();
 				break;
 
 			case 'deletePrompt':
@@ -202,27 +202,12 @@ class PromptTemplatePanel {
 		}
 	}
 
-	private async _showCreatePromptDialog() {
-		console.log('プロンプト作成ダイアログを開始');
-		const title = await vscode.window.showInputBox({
-			prompt: 'プロンプトのタイトルを入力してください',
-			placeHolder: 'タイトル'
-		});
-
-		if (!title) {
-			console.log('タイトルが未入力のため作成をキャンセル');
-			return;
-		}
-
-		const content = await vscode.window.showInputBox({
-			prompt: 'プロンプトの内容を入力してください',
-			placeHolder: 'プロンプトの内容...'
-		});
-
-		if (!content) {
-			console.log('内容が未入力のため作成をキャンセル');
-			return;
-		}
+	private async _createDefaultPrompt() {
+		console.log('新しいプロンプトを自動作成');
+		
+		// デフォルトのタイトルとコンテンツで自動作成
+		const title = 'title';
+		const content = 'prompt';
 
 		console.log(`プロンプト作成中: タイトル="${title}", 内容="${content}"`);
 		const result = await this.promptManager.addPrompt({
@@ -234,6 +219,8 @@ class PromptTemplatePanel {
 			console.log('プロンプト作成成功:', result);
 			// 新規作成したプロンプトを選択状態に
 			this.promptManager.setSelectedPrompt(result.id);
+			// 検索状態をクリア（新規作成時は全プロンプト表示）
+			this.promptManager.clearSearchState();
 			await this._sendPromptsToWebview();
 			
 			// 新規作成したプロンプトの詳細を表示
