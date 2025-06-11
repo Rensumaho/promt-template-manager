@@ -21,7 +21,8 @@
     "onCommand:prompt-template-manager.createPrompt",
     "onCommand:prompt-template-manager.exportData",
     "onCommand:prompt-template-manager.importData",
-    "onCommand:prompt-template-manager.showStats"
+    "onCommand:prompt-template-manager.showStats",
+    "onView:variableSettings"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -52,6 +53,25 @@
         "category": "Prompt Template Manager"
       }
     ],
+    "views": {
+      "explorer": [
+        {
+          "id": "variableSettings",
+          "name": "変数設定",
+          "type": "webview",
+          "contextualTitle": "Prompt Variables"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "promptTemplateManager",
+          "title": "Prompt Template Manager",
+          "icon": "$(symbol-variable)"
+        }
+      ]
+    },
     "menus": {
       "commandPalette": [
         {

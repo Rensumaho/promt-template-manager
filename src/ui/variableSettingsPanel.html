@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>変数設定</title>
+    <style>
+        body {
+            font-family: var(--vscode-font-family);
+            font-size: var(--vscode-font-size);
+            font-weight: var(--vscode-font-weight);
+            color: var(--vscode-foreground);
+            background-color: var(--vscode-editor-background);
+            margin: 0;
+            padding: 16px;
+            line-height: 1.4;
+        }
+
+        .container {
+            max-width: 100%;
+            margin: 0 auto;
+        }
+
+        .header {
+            margin-bottom: 24px;
+            border-bottom: 1px solid var(--vscode-panel-border);
+            padding-bottom: 16px;
+        }
+
+        .header h1 {
+            margin: 0 0 8px 0;
+            font-size: 20px;
+            font-weight: 600;
+        }
+
+        .header .prompt-info {
+            font-size: 14px;
+            color: var(--vscode-descriptionForeground);
+            margin-bottom: 12px;
+        }
+
+        .header .stats {
+            display: flex;
+            gap: 16px;
+            font-size: 12px;
+            color: var(--vscode-descriptionForeground);
+        }
+
+        .stats .stat-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .stats .stat-item .icon {
+            width: 16px;
+            height: 16px;
+            opacity: 0.7;
+        }
+
+        .actions {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 24px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 6px 12px;
+            border: 1px solid var(--vscode-button-border);
+            background-color: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 13px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: background-color 0.1s;
+        }
+
+        .btn:hover {
+            background-color: var(--vscode-button-hoverBackground);
+        }
+
+        .btn.primary {
+            background-color: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+        }
+
+        .btn.secondary {
+            background-color: var(--vscode-button-secondaryBackground);
+            color: var(--vscode-button-secondaryForeground);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .variables-section {
+            margin-bottom: 24px;
+        }
+
+        .section-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .variables-list {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .variable-item {
+            border: 1px solid var(--vscode-panel-border);
+            border-radius: 6px;
+            padding: 16px;
+            background-color: var(--vscode-input-background);
+        }
+
+        .variable-item.missing {
+            border-color: var(--vscode-errorBadge-background);
+            background-color: rgba(var(--vscode-errorBadge-background), 0.1);
+        }
+
+        .variable-item.complete {
+            border-color: var(--vscode-gitDecoration-addedResourceForeground);
+        }
+
+        .variable-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+
+        .variable-name {
+            font-family: var(--vscode-editor-font-family);
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--vscode-textLink-foreground);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .variable-name .syntax {
+            font-family: monospace;
+            background-color: var(--vscode-textCodeBlock-background);
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+
+        .variable-status {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 12px;
+        }
+
+        .status-icon {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        .status-icon.complete {
+            background-color: var(--vscode-gitDecoration-addedResourceForeground);
+        }
+
+        .status-icon.missing {
+            background-color: var(--vscode-errorBadge-background);
+        }
+
+        .status-icon.default {
+            background-color: var(--vscode-gitDecoration-modifiedResourceForeground);
+        }
+
+        .variable-description {
+            font-size: 13px;
+            color: var(--vscode-descriptionForeground);
+            margin-bottom: 12px;
+            line-height: 1.3;
+        }
+
+        .variable-input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .input-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--vscode-foreground);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .variable-input {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid var(--vscode-input-border);
+            background-color: var(--vscode-input-background);
+            color: var(--vscode-input-foreground);
+            border-radius: 3px;
+            font-size: 13px;
+            font-family: inherit;
+            resize: vertical;
+            min-height: 34px;
+        }
+
+        .variable-input:focus {
+            outline: none;
+            border-color: var(--vscode-focusBorder);
+        }
+
+        .variable-input.error {
+            border-color: var(--vscode-errorBadge-background);
+        }
+
+        .variable-input::placeholder {
+            color: var(--vscode-input-placeholderForeground);
+        }
+
+        .input-help {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 4px;
+        }
+
+        .help-text {
+            font-size: 11px;
+            color: var(--vscode-descriptionForeground);
+        }
+
+        .char-count {
+            font-size: 11px;
+            color: var(--vscode-descriptionForeground);
+        }
+
+        .default-value {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .default-label {
+            font-size: 11px;
+            color: var(--vscode-descriptionForeground);
+        }
+
+        .default-preview {
+            font-family: monospace;
+            font-size: 11px;
+            background-color: var(--vscode-textCodeBlock-background);
+            padding: 2px 6px;
+            border-radius: 3px;
+            color: var(--vscode-textPreformat-foreground);
+        }
+
+        .use-default-btn {
+            font-size: 11px;
+            padding: 2px 6px;
+            background-color: transparent;
+            border: 1px solid var(--vscode-button-border);
+            color: var(--vscode-textLink-foreground);
+            border-radius: 2px;
+            cursor: pointer;
+        }
+
+        .use-default-btn:hover {
+            background-color: var(--vscode-button-hoverBackground);
+        }
+
+        .variable-history {
+            margin-top: 8px;
+        }
+
+        .history-label {
+            font-size: 11px;
+            color: var(--vscode-descriptionForeground);
+            margin-bottom: 4px;
+        }
+
+        .history-items {
+            display: flex;
+            gap: 4px;
+            flex-wrap: wrap;
+        }
+
+        .history-item {
+            font-size: 11px;
+            padding: 2px 6px;
+            background-color: var(--vscode-badge-background);
+            color: var(--vscode-badge-foreground);
+            border-radius: 3px;
+            cursor: pointer;
+            transition: opacity 0.1s;
+        }
+
+        .history-item:hover {
+            opacity: 0.8;
+        }
+
+        .preview-section {
+            margin-top: 24px;
+            border-top: 1px solid var(--vscode-panel-border);
+            padding-top: 24px;
+        }
+
+        .preview-container {
+            border: 1px solid var(--vscode-panel-border);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        .preview-header {
+            background-color: var(--vscode-panel-background);
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--vscode-panel-border);
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .preview-content {
+            padding: 12px;
+            background-color: var(--vscode-editor-background);
+            font-family: var(--vscode-editor-font-family);
+            font-size: 13px;
+            line-height: 1.4;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .preview-content .variable-highlight {
+            background-color: var(--vscode-editor-findMatchHighlightBackground);
+            border-radius: 2px;
+            padding: 1px 2px;
+        }
+
+        .preview-content .variable-missing {
+            background-color: var(--vscode-errorBadge-background);
+            color: var(--vscode-errorBadge-foreground);
+            border-radius: 2px;
+            padding: 1px 2px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 48px 24px;
+            color: var(--vscode-descriptionForeground);
+        }
+
+        .empty-state .icon {
+            width: 48px;
+            height: 48px;
+            margin: 0 auto 16px auto;
+            opacity: 0.5;
+        }
+
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 48px;
+            color: var(--vscode-descriptionForeground);
+        }
+
+        .error-message {
+            background-color: var(--vscode-errorBadge-background);
+            color: var(--vscode-errorBadge-foreground);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 13px;
+            margin-bottom: 16px;
+        }
+
+        .success-message {
+            background-color: var(--vscode-gitDecoration-addedResourceForeground);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 13px;
+            margin-bottom: 16px;
+        }
+
+        .value-sets-section {
+            margin-top: 24px;
+            border-top: 1px solid var(--vscode-panel-border);
+            padding-top: 24px;
+        }
+
+        .value-sets-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .value-set-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 12px;
+            border: 1px solid var(--vscode-panel-border);
+            border-radius: 4px;
+            background-color: var(--vscode-input-background);
+        }
+
+        .value-set-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .value-set-name {
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .value-set-description {
+            font-size: 11px;
+            color: var(--vscode-descriptionForeground);
+        }
+
+        .value-set-actions {
+            display: flex;
+            gap: 4px;
+        }
+
+        .icon-btn {
+            padding: 4px;
+            background-color: transparent;
+            border: none;
+            color: var(--vscode-textLink-foreground);
+            cursor: pointer;
+            border-radius: 2px;
+        }
+
+        .icon-btn:hover {
+            background-color: var(--vscode-button-hoverBackground);
+        }
+
+        @media (max-width: 600px) {
+            .actions {
+                flex-direction: column;
+            }
+            
+            .variable-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 8px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- ヘッダー -->
+        <div class="header">
+            <h1>変数設定</h1>
+            <div class="prompt-info" id="promptInfo"></div>
+            <div class="stats">
+                <div class="stat-item">
+                    <span class="icon">📊</span>
+                    <span id="totalVariables">0個の変数</span>
+                </div>
+                <div class="stat-item">
+                    <span class="icon">✅</span>
+                    <span id="completedVariables">0個完了</span>
+                </div>
+                <div class="stat-item">
+                    <span class="icon">⚠️</span>
+                    <span id="missingVariables">0個未設定</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- メッセージエリア -->
+        <div id="messageArea"></div>
+
+        <!-- アクション -->
+        <div class="actions">
+            <button class="btn primary" id="applyBtn" disabled>
+                <span>適用</span>
+            </button>
+            <button class="btn secondary" id="resetBtn">
+                <span>リセット</span>
+            </button>
+            <button class="btn secondary" id="saveAsSetBtn">
+                <span>セットとして保存</span>
+            </button>
+            <button class="btn secondary" id="loadSetBtn">
+                <span>セットを読み込み</span>
+            </button>
+            <button class="btn secondary" id="previewBtn">
+                <span>プレビュー</span>
+            </button>
+        </div>
+
+        <!-- 変数リスト -->
+        <div class="variables-section">
+            <div class="section-title">
+                <span>変数一覧</span>
+                <span id="variableCount" class="help-text"></span>
+            </div>
+            <div id="variablesList" class="variables-list">
+                <!-- 変数アイテムがここに動的に追加される -->
+            </div>
+            <div id="emptyState" class="empty-state" style="display: none;">
+                <div class="icon">📝</div>
+                <p>プロンプトに変数が見つかりませんでした</p>
+                <p class="help-text">プロンプト内で {変数名} または {変数名:デフォルト値} の形式で変数を定義してください</p>
+            </div>
+            <div id="loadingState" class="loading" style="display: none;">
+                <span>読み込み中...</span>
+            </div>
+        </div>
+
+        <!-- プレビューセクション -->
+        <div class="preview-section" id="previewSection" style="display: none;">
+            <div class="section-title">
+                <span>プレビュー</span>
+            </div>
+            <div class="preview-container">
+                <div class="preview-header">
+                    変数置換後のプロンプト
+                </div>
+                <div class="preview-content" id="previewContent"></div>
+            </div>
+        </div>
+
+        <!-- 変数値セットセクション -->
+        <div class="value-sets-section" id="valueSetsSection" style="display: none;">
+            <div class="section-title">
+                <span>保存済み変数値セット</span>
+            </div>
+            <div id="valueSetsList" class="value-sets-list">
+                <!-- 変数値セットがここに動的に追加される -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // メッセージ通信とUI制御のスクリプトは別ファイルで管理
+    </script>
+</body>
+</html> 

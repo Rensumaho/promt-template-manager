@@ -3,7 +3,11 @@
 import * as vscode from 'vscode';
 import { PromptStorage } from './storage';
 import { PromptData, PromptInput } from './types';
+import { VariableSettingsPanel } from './ui/variableSettingsPanel';
 import { PromptUtils, PromptValidator } from './validation';
+import { VariableManager } from './variableManager';
+import { VariableReplacer } from './variableReplacer';
+import { VariableStorage } from './variableStorage';
 
 // メインのWebviewパネルクラス
 class PromptTemplatePanel {
@@ -14,8 +18,9 @@ class PromptTemplatePanel {
 	private readonly _extensionUri: vscode.Uri;
 	private _disposables: vscode.Disposable[] = [];
 	private promptManager: PromptManager;
+	private variableSettingsProvider?: VariableSettingsPanel;
 
-	public static createOrShow(extensionUri: vscode.Uri, promptManager: PromptManager) {
+	public static createOrShow(extensionUri: vscode.Uri, promptManager: PromptManager, variableSettingsProvider?: VariableSettingsPanel) {
 		const column = vscode.window.activeTextEditor
 			? vscode.window.activeTextEditor.viewColumn
 			: undefined;
@@ -23,6 +28,10 @@ class PromptTemplatePanel {
 		// パネルが既に開いている場合は表示
 		if (PromptTemplatePanel.currentPanel) {
 			PromptTemplatePanel.currentPanel._panel.reveal(column);
+			// 変数設定プロバイダーを更新
+			if (variableSettingsProvider) {
+				PromptTemplatePanel.currentPanel.variableSettingsProvider = variableSettingsProvider;
+			}
 			return;
 		}
 
@@ -37,13 +46,14 @@ class PromptTemplatePanel {
 			}
 		);
 
-		PromptTemplatePanel.currentPanel = new PromptTemplatePanel(panel, extensionUri, promptManager);
+		PromptTemplatePanel.currentPanel = new PromptTemplatePanel(panel, extensionUri, promptManager, variableSettingsProvider);
 	}
 
-	private constructor(panel: vscode.WebviewPanel, extensionUri: vscode.Uri, promptManager: PromptManager) {
+	private constructor(panel: vscode.WebviewPanel, extensionUri: vscode.Uri, promptManager: PromptManager, variableSettingsProvider?: VariableSettingsPanel) {
 		this._panel = panel;
 		this._extensionUri = extensionUri;
 		this.promptManager = promptManager;
+		this.variableSettingsProvider = variableSettingsProvider;
 
 		// パネルのHTMLコンテンツを設定
 		this._update();
@@ -94,71 +104,72 @@ class PromptTemplatePanel {
 	}
 
 	private async _handleWebviewMessage(message: any) {
+		console.log('Received message:', message);
+		
 		switch (message.type) {
 			case 'ready':
-				// Webview初期化完了時にデータを送信
-				// ウィンドウ再開時は選択状態と検索状態をクリア
-				this.promptManager.setSelectedPrompt(null);
-				this.promptManager.clearSearchState();
+				console.log('WebView準備完了');
 				await this._sendPromptsToWebview();
 				break;
 
-			case 'searchPrompts':
-				const searchQuery = message.query;
-				const searchOptions = message.options || {};
-				console.log(`検索実行: クエリ="${searchQuery}", オプション:`, searchOptions);
-				
-				// 検索時は選択状態をクリア
-				this.promptManager.setSelectedPrompt(null);
-				
-				// 検索状態を設定
-				if (searchQuery && searchQuery.trim() !== '') {
-					this.promptManager.setSearchState(searchQuery, searchOptions);
-				} else {
-					this.promptManager.clearSearchState();
-				}
-				
-				const searchResults = this.promptManager.getCurrentDisplayPrompts();
-				await this._panel.webview.postMessage({
-					type: 'updatePrompts',
-					prompts: searchResults,
-					selectedPromptId: this.promptManager.getSelectedPromptId(),
-					isSearching: this.promptManager.isSearching(),
-					searchQuery: searchQuery,
-					searchHighlight: true
-				});
+			case 'promptsRequested':
+				console.log('プロンプト一覧が要求されました');
+				await this._sendPromptsToWebview();
 				break;
 
 			case 'selectPrompt':
-				const promptId = message.id;
-				console.log(`プロンプト選択: ID=${promptId}`);
+			case 'promptSelected':
+				console.log(`プロンプトが選択されました: ID=${message.id}`);
+				this.promptManager.setSelectedPrompt(message.id);
 				
-				// 選択中プロンプトを設定
-				this.promptManager.setSelectedPrompt(promptId);
-				
-				// 選択されたプロンプトデータを取得（全プロンプトから検索）
-				const allPrompts = this.promptManager.getPrompts();
-				const selectedPrompt = allPrompts.find(p => p.id === promptId);
+				// 選択されたプロンプトをwebviewに送信
+				const selectedPrompt = this.promptManager.getPrompts().find(p => p.id === message.id);
 				if (selectedPrompt) {
-					// プロンプト一覧を更新（検索状態を保持し、選択中プロンプトが上位に移動）
-					await this._sendPromptsToWebview();
-					
-					// プロンプト詳細を表示（使用回数は増加させない）
+					console.log('選択されたプロンプト:', selectedPrompt);
 					await this._panel.webview.postMessage({
 						type: 'showPromptDetail',
 						prompt: selectedPrompt
 					});
+					
+					// 変数設定パネルに変数解析結果を送信
+					if (this.variableSettingsProvider) {
+						console.log('変数設定パネルが存在します。変数解析を開始...');
+						console.log('解析対象プロンプト内容:', selectedPrompt.content);
+						
+						try {
+							await this.variableSettingsProvider.analyzeCurrentPrompt(message.id, selectedPrompt.content);
+							console.log('変数解析完了');
+						} catch (error) {
+							console.error('変数解析エラー:', error);
+						}
+					} else {
+						console.warn('変数設定パネルが見つかりません');
+					}
 				} else {
-					console.error(`プロンプトが見つかりません: ID=${promptId}`);
+					console.error(`プロンプトが見つかりません: ID=${message.id}`);
 				}
 				break;
 
+			case 'searchPrompts':
+				console.log(`プロンプト検索: クエリ="${message.query}"`);
+				this.promptManager.setSearchState(message.query);
+				await this._sendPromptsToWebview();
+				break;
+
+			case 'clearSearch':
+				console.log('検索クリア');
+				this.promptManager.clearSearchState();
+				await this._sendPromptsToWebview();
+				break;
+
 			case 'createPrompt':
-				console.log('createPrompt メッセージを受信しました');
+			case 'addPrompt':
+				console.log('プロンプト追加');
 				await this._createDefaultPrompt();
 				break;
 
 			case 'deletePrompt':
+				console.log(`プロンプト削除: ID=${message.id}`);
 				await this._deletePrompt(message.id);
 				break;
 
@@ -174,7 +185,8 @@ class PromptTemplatePanel {
 					await this._sendPromptsToWebview();
 				}
 				
-				await this._copyPromptToClipboard(message.content);
+				// 変数設定パネルから変数値を取得してコピー
+				await this._copyPromptWithVariables(message.content, copyPromptId);
 				break;
 
 			case 'executePrompt':
@@ -191,7 +203,8 @@ class PromptTemplatePanel {
 					}
 				}
 				
-				await this._executePrompt(message.content);
+				// 変数設定パネルから変数値を取得して実行
+				await this._executePromptWithVariables(message.content, executePromptId);
 				break;
 
 			case 'updatePrompt':
@@ -278,9 +291,107 @@ class PromptTemplatePanel {
 		await vscode.env.clipboard.writeText(content);
 	}
 
+	private async _copyPromptWithVariables(content: string, promptId: string) {
+		console.log('=== _copyPromptWithVariables開始 ===');
+		console.log('コピー対象プロンプト内容:', content);
+		console.log('プロンプトID:', promptId);
+		
+		// WebViewから変数値を取得する関数
+		const getVariableValuesFromWebview = (): Promise<Record<string, string>> => {
+			return new Promise((resolve) => {
+				// WebViewに変数値を要求
+				this._panel.webview.postMessage({ type: 'getVariableValues' });
+				
+				// 一度だけメッセージを受信するためのリスナー
+				const disposable = this._panel.webview.onDidReceiveMessage(message => {
+					if (message.type === 'variableValues') {
+						disposable.dispose();
+						resolve(message.values || {});
+					}
+				});
+				
+				// タイムアウト処理（3秒後）
+				setTimeout(() => {
+					disposable.dispose();
+					resolve({});
+				}, 3000);
+			});
+		};
+		
+		try {
+			const variableValues = await getVariableValuesFromWebview();
+			console.log('WebViewから取得した変数値:', variableValues);
+			
+			// 簡易的な変数置換処理
+			let replacedContent = content;
+			
+			// 日本語対応の変数パターン
+			const variablePattern = /\{([\w\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF\u3400-\u4DBF]+(?::[^}]*)?)\}/g;
+			
+			replacedContent = content.replace(variablePattern, (match, variableContent) => {
+				const separatorIndex = variableContent.indexOf(':');
+				const variableName = separatorIndex === -1 ? variableContent : variableContent.substring(0, separatorIndex);
+				const defaultValue = separatorIndex === -1 ? '' : variableContent.substring(separatorIndex + 1);
+				
+				// 変数値を取得（ユーザー入力 > デフォルト値 > 空文字）
+				const value = variableValues[variableName] || defaultValue || '';
+				console.log(`変数置換: ${variableName} → "${value}"`);
+				return value;
+			});
+			
+			console.log('置換後の内容:', replacedContent);
+			await this._copyPromptToClipboard(replacedContent);
+			console.log('=== _copyPromptWithVariables完了 ===');
+		} catch (error) {
+			console.error('=== _copyPromptWithVariables エラー ===');
+			console.error('変数処理エラー:', error);
+			console.log('元のプロンプトをコピーします:', content);
+			await this._copyPromptToClipboard(content);
+		}
+	}
+
 	private async _executePrompt(content: string) {
 		// ここで実際のAIチャット入力欄への挿入処理を実装
 		await vscode.env.clipboard.writeText(content);
+	}
+
+	private async _executePromptWithVariables(content: string, promptId: string | undefined) {
+		try {
+			// 変数設定パネルから現在の変数値を取得
+			let processedContent = content;
+			
+			if (this.variableSettingsProvider && promptId) {
+				// 変数マネージャーから変数値を取得して置換
+				const variableManager = VariableManager.getInstance();
+				
+				// 現在のプロンプト管理情報を取得
+				const promptManagement = variableManager.getPromptManagement(promptId);
+				if (promptManagement && promptManagement.currentValueSet) {
+					// 変数値マップを作成
+					const variableValues = new Map();
+					for (const [key, value] of Object.entries(promptManagement.currentValueSet.values)) {
+						variableValues.set(key, value);
+					}
+					
+					// 変数置換を実行
+					const replacementResult = VariableReplacer.replaceVariables(content, variableValues);
+					
+					if (replacementResult.errors.length === 0) {
+						processedContent = replacementResult.replacedText;
+					} else {
+						console.warn('変数置換エラー:', replacementResult.errors);
+						// エラーがあってもそのまま処理を続行
+					}
+				}
+			}
+			
+			// ここで実際のAIチャット入力欄への挿入処理を実装
+			await vscode.env.clipboard.writeText(processedContent);
+		} catch (error) {
+			console.error('変数処理付き実行エラー:', error);
+			// フォールバック: 元のコンテンツを実行
+			await vscode.env.clipboard.writeText(content);
+		}
 	}
 
 	private async _updatePrompt(id: string, updates: any) {
@@ -621,6 +732,7 @@ class PromptTemplatePanel {
 		}
 		
 		.variable-title {
+		    display:none;
 			font-size: 16px;
 			font-weight: bold;
 			margin: 0 0 8px 0;
@@ -680,6 +792,7 @@ class PromptTemplatePanel {
 		}
 		
 		.empty-state {
+		    display: none;
 			text-align: center;
 			padding: 40px 20px;
 			color: var(--vscode-descriptionForeground);
@@ -762,7 +875,7 @@ class PromptTemplatePanel {
 			font-size: 11px;
 			min-width: 24px;
 			height: 24px;
-			display: flex;
+			display: none;
 			align-items: center;
 			justify-content: center;
 		}
@@ -777,6 +890,7 @@ class PromptTemplatePanel {
 			font-size: 14px;
 			font-weight: bold;
 			color: var(--vscode-foreground);
+			display: none;
 		}
 
 		/* 非表示状態のパネル */
@@ -988,13 +1102,13 @@ class PromptTemplatePanel {
 			</div>
 			<div class="search-content">
 				<button class="add-button" onclick="createPrompt()">
-					➕ 新しいプロンプトを追加
+					+
 				</button>
 				<input 
 					type="text" 
 					class="search-box" 
 					id="searchInput"
-					placeholder="プロンプトを検索..." 
+					placeholder="🔎" 
 					oninput="searchPrompts(this.value)"
 				/>
 			</div>
@@ -1056,6 +1170,9 @@ class PromptTemplatePanel {
 					break;
 				case 'clearPromptDetail':
 					clearPromptDetail();
+					break;
+				case 'getVariableValues':
+					getAndSendVariableValues();
 					break;
 			}
 		});
@@ -1206,7 +1323,7 @@ class PromptTemplatePanel {
 						</div>
 						<div class="prompt-summary">\${escapeHtml(prompt.content.substring(0, 60))}\${prompt.content.length > 60 ? '...' : ''}</div>
 						<div class="prompt-meta">
-							<span>使用回数: <span class="usage-count">\${prompt.usageCount}</span></span>
+							<span>number of uses: <span class="usage-count">\${prompt.usageCount}</span></span>
 						</div>
 					</div>
 				\`;
@@ -1246,7 +1363,7 @@ class PromptTemplatePanel {
 				
 				<div class="detail-meta">
 					<div class="meta-item">
-						<span>使用回数:</span>
+						<span>number of uses:</span>
 						<span>\${prompt.usageCount}回</span>
 					</div>
 				</div>
@@ -1268,7 +1385,7 @@ class PromptTemplatePanel {
 		function updateVariablePanel(prompt) {
 			const variableElement = document.getElementById('variablePanel');
 			
-			// プロンプト内容から変数を抽出（レベル5で本格実装予定）
+			// プロンプト内容から変数を抽出（日本語対応版）
 			const variables = extractVariables(prompt.content);
 			
 			if (variables.length === 0) {
@@ -1283,13 +1400,13 @@ class PromptTemplatePanel {
 					<div class="variable-list">
 						\${variables.map(variable => \`
 							<div class="variable-item">
-								<label class="variable-label" for="var_\${variable}">\${variable}:</label>
+								<label class="variable-label" for="var_\${variable.name}">\${variable.name}:</label>
 								<input 
 									type="text" 
 									class="variable-input" 
-									id="var_\${variable}"
-									placeholder="値を入力..."
-
+									id="var_\${variable.name}"
+									placeholder="\${variable.defaultValue || '値を入力...'}"
+									value="\${variable.defaultValue || ''}"
 								/>
 							</div>
 						\`).join('')}
@@ -1299,19 +1416,57 @@ class PromptTemplatePanel {
 			}
 		}
 		
-		// 変数を抽出（簡易版、レベル5で本格実装）
+		// 変数を抽出（日本語対応版）
 		function extractVariables(content) {
-			const regex = /\\{([a-zA-Z][a-zA-Z0-9_]*)\\}/g;
+			// 日本語を含む変数名に対応した正規表現
+			const regex = /\\{([\\w\\u3040-\\u309F\\u30A0-\\u30FF\\u4E00-\\u9FAF\\u3400-\\u4DBF]+(?::[^}]*)?)\\}/g;
 			const variables = [];
 			let match;
 			
 			while ((match = regex.exec(content)) !== null) {
-				if (!variables.includes(match[1])) {
-					variables.push(match[1]);
+				// 変数名とデフォルト値を分離
+				const fullContent = match[1];
+				const separatorIndex = fullContent.indexOf(':');
+				const variableName = separatorIndex === -1 ? fullContent : fullContent.substring(0, separatorIndex);
+				const defaultValue = separatorIndex === -1 ? '' : fullContent.substring(separatorIndex + 1);
+				
+				// 重複チェック
+				if (!variables.some(v => v.name === variableName)) {
+					variables.push({
+						name: variableName,
+						defaultValue: defaultValue
+					});
 				}
 			}
 			
 			return variables;
+		}
+
+		// 変数値を取得してVS Codeに送信
+		function getAndSendVariableValues() {
+			console.log('=== getAndSendVariableValues開始 ===');
+			const values = {};
+			
+			// 現在表示されている変数入力フィールドから値を取得
+			const variableInputs = document.querySelectorAll('.variable-input');
+			console.log(\`\${variableInputs.length}個の変数入力フィールドが見つかりました\`);
+			
+			variableInputs.forEach(input => {
+				const variableName = input.id.replace('var_', '');
+				const value = input.value.trim();
+				values[variableName] = value;
+				console.log(\`変数値取得: \${variableName} = "\${value}"\`);
+			});
+			
+			console.log('取得した変数値一覧:', values);
+			
+			// VS Codeに変数値を送信
+			vscode.postMessage({
+				type: 'variableValues',
+				values: values
+			});
+			
+			console.log('=== getAndSendVariableValues完了 ===');
 		}
 		
 
@@ -1633,7 +1788,7 @@ class PromptTemplatePanel {
 
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
 	// Use the console to output diagnostic information (console.log) and errors (console.error)
 	// This line of code will only be executed once when your extension is activated
 	console.log('Prompt Template Manager が起動しました！');
@@ -1644,6 +1799,15 @@ export function activate(context: vscode.ExtensionContext) {
 		// Prompt Template Manager が正常にアクティベートされました
 	} catch (error) {
 		console.error('初期メッセージ表示エラー:', error);
+	}
+
+	// VariableStorageの初期化
+	try {
+		const variableStorage = VariableStorage.getInstance();
+		await variableStorage.setContext(context);
+		console.log('VariableStorage が正常に初期化されました');
+	} catch (error) {
+		console.error('VariableStorage 初期化エラー:', error);
 	}
 
 	// プロンプトマネージャーの初期化
@@ -1657,11 +1821,17 @@ export function activate(context: vscode.ExtensionContext) {
 		return;
 	}
 
+	// 変数設定パネルの登録（コマンド登録前に実行）
+	const variableSettingsProvider = new VariableSettingsPanel(context.extensionUri);
+	context.subscriptions.push(
+		vscode.window.registerWebviewViewProvider(VariableSettingsPanel.viewType, variableSettingsProvider)
+	);
+
 	// メインパネルを開くコマンド
 	const openPanelCommand = vscode.commands.registerCommand('prompt-template-manager.openPanel', async () => {
 		console.log('openPanel コマンドが実行されました');
 		try {
-			PromptTemplatePanel.createOrShow(context.extensionUri, promptManager);
+			PromptTemplatePanel.createOrShow(context.extensionUri, promptManager, variableSettingsProvider);
 			console.log('Webviewパネルが正常に表示されました');
 		} catch (error) {
 			console.error('パネル表示中にエラーが発生:', error);
