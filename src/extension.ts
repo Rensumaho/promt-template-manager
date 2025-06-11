@@ -533,6 +533,10 @@ class PromptTemplatePanel {
 			align-items: center;
 			justify-content: center;
 		}
+
+		.action-button.undecided {
+			display: none;
+		}
 		
 		.action-button:hover {
 			background: var(--vscode-button-secondaryHoverBackground);
@@ -1234,7 +1238,7 @@ class PromptTemplatePanel {
 					<div class="detail-actions">
 						<button class="action-button" onclick="deletePrompt('\${prompt.id}')" title="削除">🗑️</button>
 						<button class="action-button" onclick="copyPrompt('\${prompt.id}')" title="コピー">📋</button>
-						<button class="action-button" onclick="executePrompt()" title="実行">▶️</button>
+						<button class="action-button undecided" onclick="executePrompt()" title="実行">▶️</button>
 					</div>
 				</div>
 				
