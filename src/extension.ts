@@ -237,7 +237,7 @@ class PromptTemplatePanel {
 		// デフォルトのタイトルとコンテンツで自動作成（重複しないようにユニークなタイトルを生成）
 		const baseTitle = 'title';
 		const title = this._generateUniqueTitle(baseTitle);
-		const content = 'prompt';
+		const content = '';
 
 		console.log(`プロンプト作成中: タイトル="${title}", 内容="${content}"`);
 		const result = await this.promptManager.addPrompt({
@@ -664,6 +664,19 @@ class PromptTemplatePanel {
 			line-height: 1.5;
 			white-space: pre-wrap;
 			word-wrap: break-word;
+			position: relative;
+		}
+
+		.detail-content.empty::before {
+			content: "Enter the prompt and define the variables like this:{variable:default-value}\\A example: Hello, {name:world} !";
+			color: var(--vscode-descriptionForeground);
+			opacity: 0.7;
+			pointer-events: none;
+			white-space: pre-line;
+		}
+
+		.detail-content:not(.empty)::before {
+			display: none;
 		}
 		
 		.editable {
@@ -1349,6 +1362,10 @@ class PromptTemplatePanel {
 			// プロンプト内容をハイライト（変数部分を強調表示）
 			const highlightedContent = highlightVariables(prompt.content);
 			
+			// 空のプロンプトかどうかを判定
+			const isEmpty = !prompt.content || prompt.content.trim() === '';
+			const emptyClass = isEmpty ? ' empty' : '';
+			
 			detailElement.innerHTML = \`
 				<div class="detail-header">
 					<h2 class="detail-title editable" onclick="startEditTitle()" title="クリックして編集">\${prompt.isFavorite ? '⭐ ' : ''}\${escapeHtml(prompt.title)}</h2>
@@ -1359,7 +1376,7 @@ class PromptTemplatePanel {
 					</div>
 				</div>
 				
-				<div class="detail-content editable" onclick="startEditContent()" title="クリックして編集">\${highlightedContent}</div>
+				<div class="detail-content editable\${emptyClass}" onclick="startEditContent()" title="クリックして編集">\${highlightedContent}</div>
 				
 				<div class="detail-meta">
 					<div class="meta-item">
@@ -1572,7 +1589,8 @@ class PromptTemplatePanel {
 		function saveContent(newContent) {
 			if (!selectedPrompt) return;
 			
-			if (newContent.trim() === '' || newContent === selectedPrompt.content) {
+			// 空の場合や変更がない場合も保存する（空にするのも有効な操作）
+			if (newContent === selectedPrompt.content) {
 				cancelContentEdit();
 				return;
 			}
@@ -1608,6 +1626,15 @@ class PromptTemplatePanel {
 			if (!contentElement) return;
 			
 			contentElement.classList.remove('editing');
+			
+			// 空のプロンプトかどうかを判定してemptyクラスを設定
+			const isEmpty = !selectedPrompt.content || selectedPrompt.content.trim() === '';
+			if (isEmpty) {
+				contentElement.classList.add('empty');
+			} else {
+				contentElement.classList.remove('empty');
+			}
+			
 			const highlightedContent = highlightVariables(selectedPrompt.content);
 			contentElement.innerHTML = highlightedContent;
 		}
