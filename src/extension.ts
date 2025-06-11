@@ -1422,7 +1422,7 @@ class PromptTemplatePanel {
 									type="text" 
 									class="variable-input" 
 									id="var_\${variable.name}"
-									placeholder="\${variable.defaultValue || '値を入力...'}"
+									placeholder="\${variable.defaultValue || 'Enter values ​​or drag and drop files'}"
 									value="\${variable.defaultValue || ''}"
 								/>
 							</div>
