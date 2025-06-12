@@ -2,9 +2,13 @@
   "name": "prompt-template-manager",
   "displayName": "Prompt Template Manager",
   "description": "VS Code extension to save, organize, and reuse AI prompts with dynamic variable substitution capabilities.",
-  "version": "0.0.1",
-  "publisher": "your-publisher-name",
+  "version": "0.0.2",
+  "publisher": "RenIzumi",
   "icon": "resources/ptm-icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Rensumaho/promt-template-manager.git"
+  },
   "engines": {
     "vscode": "^1.74.0"
   },

@@ -204,7 +204,7 @@ class PromptTemplatePanel {
 						} catch (error) {
 							console.error('変数解析エラー:', error);
 						}
-					} else {
+				} else {
 						console.warn('変数設定パネルが見つかりません');
 					}
 				} else {
@@ -1053,7 +1053,7 @@ class PromptTemplatePanel {
 			gap: 4px;
 			align-items: center;
 		}
-
+		
 		.variable-input {
 			flex: 1;
 			padding: 6px 8px;
@@ -1799,9 +1799,9 @@ class PromptTemplatePanel {
 							<div class="variable-item">
 								<label class="variable-label" for="var_\${variable.name}">\${variable.name}:</label>
 								<div class="variable-input-container">
-									<input 
-										type="text" 
-										class="variable-input" 
+								<input 
+									type="text" 
+									class="variable-input" 
 										id="var_\${variable.name}"
 										placeholder="\${variable.defaultValue || 'Enter values or click 📁 to select file'}"
 										value="\${variable.defaultValue || ''}"
@@ -1854,7 +1854,7 @@ class PromptTemplatePanel {
 			
 			return variables;
 		}
-
+		
 		// ドラッグ&ドロップのセットアップ
 		function setupDragAndDrop() {
 			// ドキュメント全体でドロップイベントをブロック（変数入力フィールド以外）
@@ -2345,8 +2345,8 @@ class PromptTemplatePanel {
 					console.log('createPrompt メッセージを送信しました');
 				});
 			} else {
-				vscode.postMessage({ type: 'createPrompt' });
-				console.log('createPrompt メッセージを送信しました');
+			vscode.postMessage({ type: 'createPrompt' });
+			console.log('createPrompt メッセージを送信しました');
 			}
 		}
 		
@@ -2365,7 +2365,7 @@ class PromptTemplatePanel {
 				}, 150);
 			}, 100);
 		}
-
+		
 		// プロンプトを削除
 		function deletePrompt(id) {
 			const button = event ? event.target : null;
@@ -2374,7 +2374,7 @@ class PromptTemplatePanel {
 					vscode.postMessage({ type: 'deletePrompt', id });
 				});
 			} else {
-				vscode.postMessage({ type: 'deletePrompt', id });
+			vscode.postMessage({ type: 'deletePrompt', id });
 			}
 		}
 		
@@ -2392,11 +2392,11 @@ class PromptTemplatePanel {
 						});
 					});
 				} else {
-					vscode.postMessage({ 
-						type: 'copyPrompt', 
-						id: id,
-						content: prompt.content 
-					});
+				vscode.postMessage({ 
+					type: 'copyPrompt', 
+					id: id,
+					content: prompt.content 
+				});
 				}
 			}
 		}

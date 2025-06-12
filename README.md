@@ -117,3 +117,7 @@ Please review
 
 - VS Code version 1.74.0 or higher
 - No additional dependencies required
+
+## Author Information
+
+- NAME:Ren Izumi （和泉 怜）
