@@ -41,7 +41,8 @@ class PromptTemplatePanel {
 			column || vscode.ViewColumn.One,
 			{
 				enableScripts: true,
-				localResourceRoots: [extensionUri]
+				localResourceRoots: [extensionUri],
+				retainContextWhenHidden: true // ウィンドウ切り替え時の状態保持を有効化
 			}
 		);
 
@@ -427,7 +428,7 @@ class PromptTemplatePanel {
 					displayPath = filePath.split(/[/\\]/).pop() || filePath;
 				}
 				
-				const formattedContent = `<file_contents>\n\`\`\`path=${displayPath}\n${fileContent}\n\`\`\`\n</file_contents>`;
+				const formattedContent = `\n<additional_data>\nBelow are some potentially helphul/relevant pieces of information for figuring out to respond\n<attached_files>\n<file_contents>\n\`\`\`path=${displayPath}\n${fileContent}\n\`\`\`\n</file_contents>\n</attached_files>\n</additional_data>\n`;
 				replacedContent = replacedContent.replace(matchInfo.match, formattedContent);
 				} catch (error) {
 					console.error(`ファイル読み込みエラー: ${fileName}`, error);
@@ -849,6 +850,19 @@ class PromptTemplatePanel {
 		
 		.action-button:hover {
 			background: var(--vscode-button-secondaryHoverBackground);
+		}
+		
+		.action-button:active {
+			background: var(--vscode-button-background);
+			transform: scale(0.95);
+			transition: all 0.1s ease;
+		}
+		
+		.action-button.clicked {
+			background: var(--vscode-button-background);
+			color: var(--vscode-button-foreground);
+			transform: scale(0.9);
+			transition: all 0.15s ease;
 		}
 		
 		.detail-content {
@@ -1482,8 +1496,13 @@ class PromptTemplatePanel {
 				return;
 			}
 			
-			// Enter: 選択されているプロンプトの詳細表示
+			// Enter: 選択されているプロンプトの詳細表示（変数入力フィールド以外）
 			if (event.key === 'Enter' && !event.ctrlKey && !event.shiftKey) {
+				// 変数入力フィールドでのEnterキーは無視
+				if (event.target && event.target.classList && event.target.classList.contains('variable-input')) {
+					return;
+				}
+				
 				const selectedItem = document.querySelector('.prompt-item.selected');
 				if (selectedItem) {
 					event.preventDefault();
@@ -1682,6 +1701,7 @@ class PromptTemplatePanel {
 										id="var_\${variable.name}"
 										placeholder="\${variable.defaultValue || 'Enter values or click 📁 to select file'}"
 										value="\${variable.defaultValue || ''}"
+										onkeydown="handleVariableInputKeydown(event)"
 									/>
 									<button 
 										class="file-select-button" 
@@ -1812,11 +1832,22 @@ class PromptTemplatePanel {
 
 		// ファイル選択処理
 		function selectFileForVariable(variableName) {
+			const button = event ? event.target : null;
 			console.log(\`ファイル選択開始: 変数 \${variableName}\`);
-			vscode.postMessage({
-				type: 'selectFileForVariable',
-				variableName: variableName
-			});
+			
+			if (button) {
+				animateButtonClick(button, () => {
+					vscode.postMessage({
+						type: 'selectFileForVariable',
+						variableName: variableName
+					});
+				});
+			} else {
+				vscode.postMessage({
+					type: 'selectFileForVariable',
+					variableName: variableName
+				});
+			}
 		}
 
 		// ファイル選択結果処理
@@ -1830,6 +1861,18 @@ class PromptTemplatePanel {
 				console.log(\`変数フィールド更新: \${variableName} = @\${fileName}\`);
 			} else {
 				console.error(\`変数入力フィールドが見つかりません: var_\${variableName}\`);
+			}
+		}
+
+		// 変数入力フィールドのキーボード処理
+		function handleVariableInputKeydown(event) {
+			// Enterキーの場合、デフォルト動作を防止（フォーム送信やページリロードを防ぐ）
+			if (event.key === 'Enter') {
+				event.preventDefault();
+				event.stopPropagation();
+				// フォーカスを維持し、値を保持
+				console.log('変数入力フィールドでEnterキーが押されました - デフォルト動作を防止');
+				return false;
 			}
 		}
 
@@ -2124,25 +2167,68 @@ class PromptTemplatePanel {
 		
 		// 新しいプロンプトを作成
 		function createPrompt() {
+			const button = event ? event.target : null;
 			console.log('createPrompt 関数が呼び出されました');
-			vscode.postMessage({ type: 'createPrompt' });
-			console.log('createPrompt メッセージを送信しました');
+			
+			if (button) {
+				animateButtonClick(button, () => {
+					vscode.postMessage({ type: 'createPrompt' });
+					console.log('createPrompt メッセージを送信しました');
+				});
+			} else {
+				vscode.postMessage({ type: 'createPrompt' });
+				console.log('createPrompt メッセージを送信しました');
+			}
 		}
 		
+		// ボタンクリック時のアニメーション効果
+		function animateButtonClick(button, callback) {
+			// クリック効果を追加
+			button.classList.add('clicked');
+			
+			// 少し遅延してコールバック実行
+			setTimeout(() => {
+				if (callback) callback();
+				
+				// アニメーション効果を削除
+				setTimeout(() => {
+					button.classList.remove('clicked');
+				}, 150);
+			}, 100);
+		}
+
 		// プロンプトを削除
 		function deletePrompt(id) {
-			vscode.postMessage({ type: 'deletePrompt', id });
+			const button = event ? event.target : null;
+			if (button) {
+				animateButtonClick(button, () => {
+					vscode.postMessage({ type: 'deletePrompt', id });
+				});
+			} else {
+				vscode.postMessage({ type: 'deletePrompt', id });
+			}
 		}
 		
 		// プロンプトをコピー
 		function copyPrompt(id) {
+			const button = event ? event.target : null;
 			const prompt = currentPrompts.find(p => p.id === id);
 			if (prompt) {
-				vscode.postMessage({ 
-					type: 'copyPrompt', 
-					id: id,
-					content: prompt.content 
-				});
+				if (button) {
+					animateButtonClick(button, () => {
+						vscode.postMessage({ 
+							type: 'copyPrompt', 
+							id: id,
+							content: prompt.content 
+						});
+					});
+				} else {
+					vscode.postMessage({ 
+						type: 'copyPrompt', 
+						id: id,
+						content: prompt.content 
+					});
+				}
 			}
 		}
 		
