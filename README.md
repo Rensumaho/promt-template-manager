@@ -1,64 +1,96 @@
 # Prompt Template Manager
 
-VS Code extension to save, organize, and reuse AI prompts with dynamic variable substitution capabilities.
+A powerful VS Code extension designed to streamline AI-assisted development by managing reusable prompt templates with dynamic variable substitution and file content integration capabilities.
+
+## Overview
+
+Prompt Template Manager addresses the common challenge of repeatedly crafting similar prompts for AI assistance. Instead of writing "Tell me about cow sounds," "Tell me about chicken lifespan," and "Tell me about hippo weight" from scratch each time, you can create a single template like `"Tell me about {animal}'s {feature}"` and simply fill in the variables when needed.
 
 ## Features
 
-- Save and organize frequently used prompts
-- Search through your prompt collection
-- Sort prompts by usage count
-- Edit and delete prompts
-- Mark prompts as favorites
-- Variable substitution (planned for Level 5)
+### ✅ Core Features (Implemented)
+
+- **📝 Prompt Management**: Save, edit, and organize frequently used prompt templates
+- **🔍 Smart Search**: Quickly find prompts from your collection
+- **📊 Usage Tracking**: Automatic sorting by usage frequency
+- **💾 Global Storage**: Prompts are available across all VS Code workspaces
+
+### ✅ File Content Integration
+
+When you select a file using the 📁 button for a variable, the extension automatically:
+
+- Opens a file selection dialog to choose files
+- Reads the selected file content
+- Formats it in a structured XML format expected by AI tools
+- Handles both workspace-relative and absolute file paths
+- Displays the file reference as `@filename` in the variable input
+
+Example workflow:
+
+```
+1. Create a prompt: "Please review {code_file}"
+2. Click the 📁 button next to the code_file variable
+3. Select a file (e.g., main.ts) from the dialog
+4. The variable input shows: @main.ts
+5. When executed, it expands to:
+
+```
+
+````XML
+Please review
+<additional_data>
+<attached_files>
+<file_contents>
+```path=project-name/main.ts
+[actual file content here]
+```
+
+</file_contents>
+</attached_files>
+</additional_data>
+
+````
+
+### ✅ User Experience Enhancements
+
+- **🎭 Activity Bar Integration**: Custom PTM icon in the activity bar for quick access
+- **⚡ Button Animations**: Visual feedback for all interactions
+- **🔄 State Persistence**: Maintains context when switching between windows
+- **🎨 Modern UI**: Beautiful, responsive interface with VS Code theming
 
 ## Usage
 
-1. Open the Command Palette (`Ctrl+Shift+P`)
-2. Run "Open Prompt Template Manager"
-3. Use the interface to create, edit, and manage your prompts
+### Basic Usage
+
+1. **Open the Manager**:
+
+   - Use Command Palette (`Ctrl+Shift+P`) → "Open Prompt Template Manager"
+   - Click the PTM icon in the activity bar
+   - Use the command "Create New Prompt" for quick creation
+
+2. **Create a Prompt**:
+
+   - Click "New Prompt" in the interface
+   - Enter a descriptive title
+   - Write your prompt content with variables like `{variable:default_value}`
+
+3. **Use Variables**:
+   - Variables are automatically detected in `{variable}` format
+   - Set default values with `{variable:default_value}` syntax
+   - Fill in values using the right panel interface
+
+### File Integration
+
+1. **Select Files**: Click the 📁 button next to variable inputs to open file selection dialog
+2. **File Reference**: Selected files are automatically referenced as `@filename` in the variable
+3. **Set Defaults**: Use the 📌 button to save current values as defaults
+
+## Installation
+
+1. Install from VS Code Marketplace (when published)
+2. Or install from VSIX file during development
 
 ## Requirements
 
-- VS Code version 1.100.0 or higher
-
-## Extension Settings
-
-This extension contributes the following settings:
-
-- `prompt-template-manager.enableAutoSave`: Enable/disable automatic saving of prompts
-
-## Known Issues
-
-None at this time.
-
-## Release Notes
-
-### 0.0.1
-
-Initial release of Prompt Template Manager
-
-- Basic prompt management functionality
-- Create, edit, delete prompts
-- Usage-based sorting
-- Search functionality
-
-## Following extension guidelines
-
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
-
-- [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
-
-## Working with Markdown
-
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
-
-- Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-- Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-- Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
-
-## For more information
-
-- [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-- [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
-
-**Enjoy!**
+- VS Code version 1.74.0 or higher
+- No additional dependencies required
