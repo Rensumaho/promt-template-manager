@@ -3,7 +3,9 @@
 import * as vscode from 'vscode';
 import { PromptStorage } from './storage';
 import { PromptData, PromptInput } from './types';
+import { VariableSettingsPanel } from './ui/variableSettingsPanel';
 import { PromptUtils, PromptValidator } from './validation';
+import { VariableStorage } from './variableStorage';
 
 // メインのWebviewパネルクラス
 class PromptTemplatePanel {
@@ -14,8 +16,10 @@ class PromptTemplatePanel {
 	private readonly _extensionUri: vscode.Uri;
 	private _disposables: vscode.Disposable[] = [];
 	private promptManager: PromptManager;
+	private variableSettingsProvider?: VariableSettingsPanel;
+	private fileContentMappings: Map<string, {fileName: string, content: string}> = new Map(); // 変数名 -> ファイル情報
 
-	public static createOrShow(extensionUri: vscode.Uri, promptManager: PromptManager) {
+	public static createOrShow(extensionUri: vscode.Uri, promptManager: PromptManager, variableSettingsProvider?: VariableSettingsPanel) {
 		const column = vscode.window.activeTextEditor
 			? vscode.window.activeTextEditor.viewColumn
 			: undefined;
@@ -23,6 +27,10 @@ class PromptTemplatePanel {
 		// パネルが既に開いている場合は表示
 		if (PromptTemplatePanel.currentPanel) {
 			PromptTemplatePanel.currentPanel._panel.reveal(column);
+			// 変数設定プロバイダーを更新
+			if (variableSettingsProvider) {
+				PromptTemplatePanel.currentPanel.variableSettingsProvider = variableSettingsProvider;
+			}
 			return;
 		}
 
@@ -33,17 +41,19 @@ class PromptTemplatePanel {
 			column || vscode.ViewColumn.One,
 			{
 				enableScripts: true,
-				localResourceRoots: [extensionUri]
+				localResourceRoots: [extensionUri],
+				retainContextWhenHidden: true // ウィンドウ切り替え時の状態保持を有効化
 			}
 		);
 
-		PromptTemplatePanel.currentPanel = new PromptTemplatePanel(panel, extensionUri, promptManager);
+		PromptTemplatePanel.currentPanel = new PromptTemplatePanel(panel, extensionUri, promptManager, variableSettingsProvider);
 	}
 
-	private constructor(panel: vscode.WebviewPanel, extensionUri: vscode.Uri, promptManager: PromptManager) {
+	private constructor(panel: vscode.WebviewPanel, extensionUri: vscode.Uri, promptManager: PromptManager, variableSettingsProvider?: VariableSettingsPanel) {
 		this._panel = panel;
 		this._extensionUri = extensionUri;
 		this.promptManager = promptManager;
+		this.variableSettingsProvider = variableSettingsProvider;
 
 		// パネルのHTMLコンテンツを設定
 		this._update();
@@ -94,71 +104,72 @@ class PromptTemplatePanel {
 	}
 
 	private async _handleWebviewMessage(message: any) {
+		console.log('Received message:', message);
+		
 		switch (message.type) {
 			case 'ready':
-				// Webview初期化完了時にデータを送信
-				// ウィンドウ再開時は選択状態と検索状態をクリア
-				this.promptManager.setSelectedPrompt(null);
-				this.promptManager.clearSearchState();
+				console.log('WebView準備完了');
 				await this._sendPromptsToWebview();
 				break;
 
-			case 'searchPrompts':
-				const searchQuery = message.query;
-				const searchOptions = message.options || {};
-				console.log(`検索実行: クエリ="${searchQuery}", オプション:`, searchOptions);
-				
-				// 検索時は選択状態をクリア
-				this.promptManager.setSelectedPrompt(null);
-				
-				// 検索状態を設定
-				if (searchQuery && searchQuery.trim() !== '') {
-					this.promptManager.setSearchState(searchQuery, searchOptions);
-				} else {
-					this.promptManager.clearSearchState();
-				}
-				
-				const searchResults = this.promptManager.getCurrentDisplayPrompts();
-				await this._panel.webview.postMessage({
-					type: 'updatePrompts',
-					prompts: searchResults,
-					selectedPromptId: this.promptManager.getSelectedPromptId(),
-					isSearching: this.promptManager.isSearching(),
-					searchQuery: searchQuery,
-					searchHighlight: true
-				});
+			case 'promptsRequested':
+				console.log('プロンプト一覧が要求されました');
+				await this._sendPromptsToWebview();
 				break;
 
 			case 'selectPrompt':
-				const promptId = message.id;
-				console.log(`プロンプト選択: ID=${promptId}`);
+			case 'promptSelected':
+				console.log(`プロンプトが選択されました: ID=${message.id}`);
+				this.promptManager.setSelectedPrompt(message.id);
 				
-				// 選択中プロンプトを設定
-				this.promptManager.setSelectedPrompt(promptId);
-				
-				// 選択されたプロンプトデータを取得（全プロンプトから検索）
-				const allPrompts = this.promptManager.getPrompts();
-				const selectedPrompt = allPrompts.find(p => p.id === promptId);
+				// 選択されたプロンプトをwebviewに送信
+				const selectedPrompt = this.promptManager.getPrompts().find(p => p.id === message.id);
 				if (selectedPrompt) {
-					// プロンプト一覧を更新（検索状態を保持し、選択中プロンプトが上位に移動）
-					await this._sendPromptsToWebview();
-					
-					// プロンプト詳細を表示（使用回数は増加させない）
+					console.log('選択されたプロンプト:', selectedPrompt);
 					await this._panel.webview.postMessage({
 						type: 'showPromptDetail',
 						prompt: selectedPrompt
 					});
+					
+					// 変数設定パネルに変数解析結果を送信
+					if (this.variableSettingsProvider) {
+						console.log('変数設定パネルが存在します。変数解析を開始...');
+						console.log('解析対象プロンプト内容:', selectedPrompt.content);
+						
+						try {
+							await this.variableSettingsProvider.analyzeCurrentPrompt(message.id, selectedPrompt.content);
+							console.log('変数解析完了');
+						} catch (error) {
+							console.error('変数解析エラー:', error);
+						}
+					} else {
+						console.warn('変数設定パネルが見つかりません');
+					}
 				} else {
-					console.error(`プロンプトが見つかりません: ID=${promptId}`);
+					console.error(`プロンプトが見つかりません: ID=${message.id}`);
 				}
 				break;
 
+			case 'searchPrompts':
+				console.log(`プロンプト検索: クエリ="${message.query}"`);
+				this.promptManager.setSearchState(message.query);
+				await this._sendPromptsToWebview();
+				break;
+
+			case 'clearSearch':
+				console.log('検索クリア');
+				this.promptManager.clearSearchState();
+				await this._sendPromptsToWebview();
+				break;
+
 			case 'createPrompt':
-				console.log('createPrompt メッセージを受信しました');
+			case 'addPrompt':
+				console.log('プロンプト追加');
 				await this._createDefaultPrompt();
 				break;
 
 			case 'deletePrompt':
+				console.log(`プロンプト削除: ID=${message.id}`);
 				await this._deletePrompt(message.id);
 				break;
 
@@ -174,7 +185,8 @@ class PromptTemplatePanel {
 					await this._sendPromptsToWebview();
 				}
 				
-				await this._copyPromptToClipboard(message.content);
+				// 変数設定パネルから変数値を取得してコピー
+				await this._copyPromptWithVariables(message.content, copyPromptId);
 				break;
 
 			case 'executePrompt':
@@ -191,11 +203,22 @@ class PromptTemplatePanel {
 					}
 				}
 				
-				await this._executePrompt(message.content);
+				// 変数設定パネルから変数値を取得して実行
+				await this._executePromptWithVariables(message.content, executePromptId);
 				break;
 
 			case 'updatePrompt':
 				await this._updatePrompt(message.id, message.updates);
+				break;
+
+			case 'fileContentLoaded':
+				console.log(`ファイル内容読み込み: ${message.fileName} -> 変数: ${message.variableName}`);
+				this._handleFileContentLoaded(message.fileName, message.variableName, message.content);
+				break;
+
+			case 'selectFileForVariable':
+				console.log(`ファイル選択要求: 変数 ${message.variableName}`);
+				await this._handleFileSelection(message.variableName);
 				break;
 
 			default:
@@ -224,7 +247,7 @@ class PromptTemplatePanel {
 		// デフォルトのタイトルとコンテンツで自動作成（重複しないようにユニークなタイトルを生成）
 		const baseTitle = 'title';
 		const title = this._generateUniqueTitle(baseTitle);
-		const content = 'prompt';
+		const content = '';
 
 		console.log(`プロンプト作成中: タイトル="${title}", 内容="${content}"`);
 		const result = await this.promptManager.addPrompt({
@@ -247,6 +270,76 @@ class PromptTemplatePanel {
 			});
 		} else {
 			console.error('プロンプト作成失敗 - addPromptメソッドがnullを返しました');
+		}
+	}
+
+
+
+	private _handleFileContentLoaded(fileName: string, variableName: string, content: string) {
+		console.log(`ファイル内容キャッシュ: ${variableName} -> ${fileName} (${content.length}文字)`);
+		
+		// ファイル内容をマッピングに保存
+		this.fileContentMappings.set(variableName, {
+			fileName: fileName,
+			content: content
+		});
+	}
+
+	private async _handleFileSelection(variableName: string) {
+		try {
+			const fileUris = await vscode.window.showOpenDialog({
+				canSelectMany: false,
+				openLabel: 'ファイルを選択',
+				filters: {
+					'すべてのファイル': ['*'],
+					'テキストファイル': ['txt', 'md', 'json', 'js', 'ts', 'py', 'java', 'cpp', 'c', 'h'],
+					'設定ファイル': ['json', 'yaml', 'yml', 'xml', 'toml'],
+					'ドキュメント': ['md', 'txt', 'doc', 'docx', 'pdf']
+				}
+			});
+
+			if (fileUris && fileUris.length > 0) {
+				const fileUri = fileUris[0];
+				
+				// ファイル内容を読み込み
+				const document = await vscode.workspace.openTextDocument(fileUri);
+				const content = document.getText();
+				
+				// パスを取得（プロジェクト内外で判定）
+				const workspaceFolder = vscode.workspace.getWorkspaceFolder(fileUri);
+				let fileName: string;
+				let isInWorkspace = false;
+				
+				if (workspaceFolder) {
+					// プロジェクト内の場合：相対パスを使用
+					fileName = vscode.workspace.asRelativePath(fileUri, false);
+					isInWorkspace = true;
+					console.log(`プロジェクト内ファイル: ${fileName}`);
+				} else {
+					// プロジェクト外の場合：絶対パスを使用
+					fileName = fileUri.fsPath;
+					isInWorkspace = false;
+					console.log(`プロジェクト外ファイル: ${fileName}`);
+				}
+				
+				// ファイル内容をキャッシュ（フルパスで保存）
+				this.fileContentMappings.set(variableName, {
+					fileName: fileUri.fsPath, // 絶対パスで保存
+					content: content
+				});
+				
+				// WebView に結果を送信
+				await this._panel.webview.postMessage({
+					type: 'fileSelected',
+					variableName: variableName,
+					fileName: fileName
+				});
+				
+				console.log(`ファイル選択完了: ${variableName} -> ${fileName} (保存パス: ${fileUri.fsPath})`);
+			}
+		} catch (error) {
+			console.error('ファイル選択エラー:', error);
+			vscode.window.showErrorMessage(`ファイル選択中にエラーが発生しました: ${error}`);
 		}
 	}
 
@@ -278,9 +371,226 @@ class PromptTemplatePanel {
 		await vscode.env.clipboard.writeText(content);
 	}
 
+	private async _replaceVariablesWithFileContent(content: string, variablePattern: RegExp, variableValues: Record<string, string>): Promise<string> {
+		let replacedContent = content;
+		const matches: Array<{match: string, variableName: string, defaultValue: string, value: string}> = [];
+		
+		// まず全ての変数マッチを収集
+		let match;
+		while ((match = variablePattern.exec(content)) !== null) {
+			const fullContent = match[1];
+			const separatorIndex = fullContent.indexOf(':');
+			const variableName = separatorIndex === -1 ? fullContent : fullContent.substring(0, separatorIndex);
+			const defaultValue = separatorIndex === -1 ? '' : fullContent.substring(separatorIndex + 1);
+			
+			// 変数値を取得（ユーザー入力 > デフォルト値 > 空文字）
+			const value = variableValues[variableName] || defaultValue || '';
+			
+			matches.push({
+				match: match[0],
+				variableName,
+				defaultValue,
+				value
+			});
+		}
+		
+		// 各変数を処理
+		for (const matchInfo of matches) {
+			console.log(`変数置換: ${matchInfo.variableName} → "${matchInfo.value}"`);
+			
+			// @filenameパターンをチェック
+			if (matchInfo.value.startsWith('@')) {
+				const fileName = matchInfo.value.substring(1); // @を除去
+				try {
+					const fileContent = await this._readFileContent(fileName, matchInfo.variableName);
+					
+									// ファイルパスを取得（マッピングまたは検索結果から）
+				const fileInfo = this.fileContentMappings.get(matchInfo.variableName);
+				let filePath = fileInfo?.fileName || fileName;
+				
+				// パスの表示形式を決定（プロジェクト内外で判定）
+				let displayPath: string;
+				try {
+					const fileUri = vscode.Uri.file(filePath);
+					const workspaceFolder = vscode.workspace.getWorkspaceFolder(fileUri);
+					
+					if (workspaceFolder) {
+						// プロジェクト内の場合：ワークスペース名/相対パス
+						const relativePath = vscode.workspace.asRelativePath(fileUri, false);
+						const workspaceName = workspaceFolder.name;
+						displayPath = `${workspaceName}/${relativePath}`;
+					} else {
+						// プロジェクト外の場合：絶対パスをそのまま使用
+						displayPath = filePath.replace(/\\/g, '/'); // Windowsのパス区切りを統一
+					}
+				} catch (error) {
+					// エラーの場合はフォールバック（ファイル名のみ）
+					displayPath = filePath.split(/[/\\]/).pop() || filePath;
+				}
+				
+				const formattedContent = `\n<additional_data>\nBelow are some potentially helphul/relevant pieces of information for figuring out to respond\n<attached_files>\n<file_contents>\n\`\`\`path=${displayPath}\n${fileContent}\n\`\`\`\n</file_contents>\n</attached_files>\n</additional_data>\n`;
+				replacedContent = replacedContent.replace(matchInfo.match, formattedContent);
+				} catch (error) {
+					console.error(`ファイル読み込みエラー: ${fileName}`, error);
+					// エラーの場合は元の値をそのまま使用
+					replacedContent = replacedContent.replace(matchInfo.match, matchInfo.value);
+				}
+			} else {
+				// 通常の変数置換
+				replacedContent = replacedContent.replace(matchInfo.match, matchInfo.value);
+			}
+		}
+		
+		return replacedContent;
+	}
+
+	private async _readFileContent(fileName: string, variableName?: string): Promise<string> {
+		// ワークスペース内でファイルを検索
+		const workspaceFolders = vscode.workspace.workspaceFolders;
+		if (!workspaceFolders || workspaceFolders.length === 0) {
+			throw new Error('ワークスペースが開かれていません');
+		}
+		
+		let filePath: string | undefined;
+		
+		// 変数名が指定されていて、ファイル内容マッピングがある場合はそれを使用
+		if (variableName && this.fileContentMappings.has(variableName)) {
+			const fileInfo = this.fileContentMappings.get(variableName);
+			if (fileInfo) {
+				console.log(`ファイル内容キャッシュを使用: ${variableName} -> ${fileInfo.fileName}`);
+				return fileInfo.content;
+			}
+		}
+		
+		let fileUri: vscode.Uri;
+		
+		if (filePath) {
+			// マッピングされたファイルパスを使用
+			fileUri = vscode.Uri.joinPath(workspaceFolders[0].uri, filePath);
+			
+			// ファイルの存在確認
+			try {
+				await vscode.workspace.fs.stat(fileUri);
+			} catch (error) {
+				throw new Error(`ファイルが見つかりません: ${filePath}`);
+			}
+		} else {
+			// フォールバック: ファイル名で検索
+			console.log(`ファイルパスマッピングがないため検索: ${fileName}`);
+			const files = await vscode.workspace.findFiles(`**/${fileName}`, '**/node_modules/**', 1);
+			
+			if (files.length === 0) {
+				throw new Error(`ファイルが見つかりません: ${fileName}`);
+			}
+			
+			fileUri = files[0];
+		}
+		
+		// ファイル内容を読み込み
+		const document = await vscode.workspace.openTextDocument(fileUri);
+		return document.getText();
+	}
+
+	private async _copyPromptWithVariables(content: string, promptId: string) {
+		console.log('=== _copyPromptWithVariables開始 ===');
+		console.log('コピー対象プロンプト内容:', content);
+		console.log('プロンプトID:', promptId);
+		
+		// WebViewから変数値を取得する関数
+		const getVariableValuesFromWebview = (): Promise<Record<string, string>> => {
+			return new Promise((resolve) => {
+				// WebViewに変数値を要求
+				this._panel.webview.postMessage({ type: 'getVariableValues' });
+				
+				// 一度だけメッセージを受信するためのリスナー
+				const disposable = this._panel.webview.onDidReceiveMessage(message => {
+					if (message.type === 'variableValues') {
+						disposable.dispose();
+						resolve(message.values || {});
+					}
+				});
+				
+				// タイムアウト処理（3秒後）
+				setTimeout(() => {
+					disposable.dispose();
+					resolve({});
+				}, 3000);
+			});
+		};
+		
+		try {
+			const variableValues = await getVariableValuesFromWebview();
+			console.log('WebViewから取得した変数値:', variableValues);
+			
+			// 簡易的な変数置換処理
+			let replacedContent = content;
+			
+			// 日本語対応の変数パターン
+			const variablePattern = /\{([\w\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF\u3400-\u4DBF]+(?::[^}]*)?)\}/g;
+			
+			replacedContent = await this._replaceVariablesWithFileContent(content, variablePattern, variableValues);
+			
+			console.log('置換後の内容:', replacedContent);
+			await this._copyPromptToClipboard(replacedContent);
+			console.log('=== _copyPromptWithVariables完了 ===');
+		} catch (error) {
+			console.error('=== _copyPromptWithVariables エラー ===');
+			console.error('変数処理エラー:', error);
+			console.log('元のプロンプトをコピーします:', content);
+			await this._copyPromptToClipboard(content);
+		}
+	}
+
 	private async _executePrompt(content: string) {
 		// ここで実際のAIチャット入力欄への挿入処理を実装
 		await vscode.env.clipboard.writeText(content);
+	}
+
+	private async _executePromptWithVariables(content: string, promptId: string | undefined) {
+		console.log('=== _executePromptWithVariables開始 ===');
+		console.log('実行対象プロンプト内容:', content);
+		console.log('プロンプトID:', promptId);
+		
+		// WebViewから変数値を取得する関数
+		const getVariableValuesFromWebview = (): Promise<Record<string, string>> => {
+			return new Promise((resolve) => {
+				// WebViewに変数値を要求
+				this._panel.webview.postMessage({ type: 'getVariableValues' });
+				
+				// 一度だけメッセージを受信するためのリスナー
+				const disposable = this._panel.webview.onDidReceiveMessage(message => {
+					if (message.type === 'variableValues') {
+						disposable.dispose();
+						resolve(message.values || {});
+					}
+				});
+				
+				// タイムアウト処理（3秒後）
+				setTimeout(() => {
+					disposable.dispose();
+					resolve({});
+				}, 3000);
+			});
+		};
+		
+		try {
+			const variableValues = await getVariableValuesFromWebview();
+			console.log('WebViewから取得した変数値:', variableValues);
+			
+			// 日本語対応の変数パターン
+			const variablePattern = /\{([\w\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF\u3400-\u4DBF]+(?::[^}]*)?)\}/g;
+			
+			const replacedContent = await this._replaceVariablesWithFileContent(content, variablePattern, variableValues);
+			
+			console.log('置換後の内容:', replacedContent);
+			await vscode.env.clipboard.writeText(replacedContent);
+			console.log('=== _executePromptWithVariables完了 ===');
+		} catch (error) {
+			console.error('=== _executePromptWithVariables エラー ===');
+			console.error('変数処理エラー:', error);
+			console.log('元のプロンプトを実行します:', content);
+			await vscode.env.clipboard.writeText(content);
+		}
 	}
 
 	private async _updatePrompt(id: string, updates: any) {
@@ -542,6 +852,19 @@ class PromptTemplatePanel {
 			background: var(--vscode-button-secondaryHoverBackground);
 		}
 		
+		.action-button:active {
+			background: var(--vscode-button-background);
+			transform: scale(0.95);
+			transition: all 0.1s ease;
+		}
+		
+		.action-button.clicked {
+			background: var(--vscode-button-background);
+			color: var(--vscode-button-foreground);
+			transform: scale(0.9);
+			transition: all 0.15s ease;
+		}
+		
 		.detail-content {
 			background: var(--vscode-textCodeBlock-background);
 			border: 1px solid var(--vscode-panel-border);
@@ -553,6 +876,19 @@ class PromptTemplatePanel {
 			line-height: 1.5;
 			white-space: pre-wrap;
 			word-wrap: break-word;
+			position: relative;
+		}
+
+		.detail-content.empty::before {
+			content: "Enter the prompt and define the variables like this:{variable:default-value}\\A example: Hello, {name:world} !";
+			color: var(--vscode-descriptionForeground);
+			opacity: 0.7;
+			pointer-events: none;
+			white-space: pre-line;
+		}
+
+		.detail-content:not(.empty)::before {
+			display: none;
 		}
 		
 		.editable {
@@ -593,11 +929,17 @@ class PromptTemplatePanel {
 		}
 		
 		.variable-highlight {
-			background: var(--vscode-editor-selectionHighlightBackground);
 			color: var(--vscode-editor-foreground);
 			padding: 2px 4px;
 			border-radius: 3px;
 			border: 1px solid var(--vscode-focusBorder);
+			font-weight: bold;
+		}
+		
+		.file-default-highlight {
+			color: var(--vscode-editor-foreground);
+			padding: 2px 4px;
+			border-radius: 3px;
 			font-weight: bold;
 		}
 		
@@ -621,6 +963,7 @@ class PromptTemplatePanel {
 		}
 		
 		.variable-title {
+		    display:none;
 			font-size: 16px;
 			font-weight: bold;
 			margin: 0 0 8px 0;
@@ -643,8 +986,14 @@ class PromptTemplatePanel {
 			color: var(--vscode-foreground);
 		}
 		
+		.variable-input-container {
+			display: flex;
+			gap: 4px;
+			align-items: center;
+		}
+
 		.variable-input {
-			width: 100%;
+			flex: 1;
 			padding: 6px 8px;
 			background: var(--vscode-input-background);
 			color: var(--vscode-input-foreground);
@@ -657,6 +1006,46 @@ class PromptTemplatePanel {
 			border-color: var(--vscode-focusBorder);
 			outline: none;
 		}
+
+		.file-select-button {
+			padding: 6px 8px;
+			background: var(--vscode-button-secondaryBackground);
+			color: var(--vscode-button-secondaryForeground);
+			border: 1px solid var(--vscode-button-border);
+			border-radius: 3px;
+			cursor: pointer;
+			font-size: 12px;
+			min-width: 32px;
+			height: 32px;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+		}
+
+		.file-select-button:hover {
+			background: var(--vscode-button-secondaryHoverBackground);
+		}
+
+		.set-default-button {
+			padding: 6px 8px;
+			background: var(--vscode-button-secondaryBackground);
+			color: var(--vscode-button-secondaryForeground);
+			border: 1px solid var(--vscode-button-border);
+			border-radius: 3px;
+			cursor: pointer;
+			font-size: 12px;
+			min-width: 32px;
+			height: 32px;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+		}
+
+		.set-default-button:hover {
+			background: var(--vscode-button-secondaryHoverBackground);
+		}
+
+
 		
 		.execute-button {
 			width: 100%;
@@ -680,6 +1069,7 @@ class PromptTemplatePanel {
 		}
 		
 		.empty-state {
+		    display: none;
 			text-align: center;
 			padding: 40px 20px;
 			color: var(--vscode-descriptionForeground);
@@ -762,7 +1152,7 @@ class PromptTemplatePanel {
 			font-size: 11px;
 			min-width: 24px;
 			height: 24px;
-			display: flex;
+			display: none;
 			align-items: center;
 			justify-content: center;
 		}
@@ -777,6 +1167,7 @@ class PromptTemplatePanel {
 			font-size: 14px;
 			font-weight: bold;
 			color: var(--vscode-foreground);
+			display: none;
 		}
 
 		/* 非表示状態のパネル */
@@ -988,13 +1379,13 @@ class PromptTemplatePanel {
 			</div>
 			<div class="search-content">
 				<button class="add-button" onclick="createPrompt()">
-					➕ 新しいプロンプトを追加
+					+
 				</button>
 				<input 
 					type="text" 
 					class="search-box" 
 					id="searchInput"
-					placeholder="プロンプトを検索..." 
+					placeholder="🔎" 
 					oninput="searchPrompts(this.value)"
 				/>
 			</div>
@@ -1057,6 +1448,12 @@ class PromptTemplatePanel {
 				case 'clearPromptDetail':
 					clearPromptDetail();
 					break;
+				case 'getVariableValues':
+					getAndSendVariableValues();
+					break;
+				case 'fileSelected':
+					handleFileSelected(message.variableName, message.fileName);
+					break;
 			}
 		});
 		
@@ -1064,8 +1461,39 @@ class PromptTemplatePanel {
 		document.addEventListener('DOMContentLoaded', () => {
 			initKeyboardShortcuts();
 			initResponsiveLayout();
+			initGlobalDragDropPrevention();
 			vscode.postMessage({ type: 'ready' });
 		});
+		
+		// グローバルなドラッグ&ドロップ防止
+		function initGlobalDragDropPrevention() {
+			// body要素に対してもドロップを防止
+			document.body.addEventListener('dragover', (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				e.dataTransfer.dropEffect = 'none';
+			}, true);
+			
+			document.body.addEventListener('drop', (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				console.log('グローバルドロップイベントがブロックされました');
+				return false;
+			}, true);
+			
+			// window レベルでもブロック
+			window.addEventListener('dragover', (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+			}, true);
+			
+			window.addEventListener('drop', (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				console.log('Windowレベルドロップイベントがブロックされました');
+				return false;
+			}, true);
+		}
 
 		// レスポンシブレイアウトの初期化
 		function initResponsiveLayout() {
@@ -1095,8 +1523,13 @@ class PromptTemplatePanel {
 				return;
 			}
 			
-			// Enter: 選択されているプロンプトの詳細表示
+			// Enter: 選択されているプロンプトの詳細表示（変数入力フィールド以外）
 			if (event.key === 'Enter' && !event.ctrlKey && !event.shiftKey) {
+				// 変数入力フィールドでのEnterキーは無視
+				if (event.target && event.target.classList && event.target.classList.contains('variable-input')) {
+					return;
+				}
+				
 				const selectedItem = document.querySelector('.prompt-item.selected');
 				if (selectedItem) {
 					event.preventDefault();
@@ -1206,7 +1639,7 @@ class PromptTemplatePanel {
 						</div>
 						<div class="prompt-summary">\${escapeHtml(prompt.content.substring(0, 60))}\${prompt.content.length > 60 ? '...' : ''}</div>
 						<div class="prompt-meta">
-							<span>使用回数: <span class="usage-count">\${prompt.usageCount}</span></span>
+							<span>number of uses: <span class="usage-count">\${prompt.usageCount}</span></span>
 						</div>
 					</div>
 				\`;
@@ -1232,6 +1665,10 @@ class PromptTemplatePanel {
 			// プロンプト内容をハイライト（変数部分を強調表示）
 			const highlightedContent = highlightVariables(prompt.content);
 			
+			// 空のプロンプトかどうかを判定
+			const isEmpty = !prompt.content || prompt.content.trim() === '';
+			const emptyClass = isEmpty ? ' empty' : '';
+			
 			detailElement.innerHTML = \`
 				<div class="detail-header">
 					<h2 class="detail-title editable" onclick="startEditTitle()" title="クリックして編集">\${prompt.isFavorite ? '⭐ ' : ''}\${escapeHtml(prompt.title)}</h2>
@@ -1242,11 +1679,11 @@ class PromptTemplatePanel {
 					</div>
 				</div>
 				
-				<div class="detail-content editable" onclick="startEditContent()" title="クリックして編集">\${highlightedContent}</div>
+				<div class="detail-content editable\${emptyClass}" onclick="startEditContent()" title="クリックして編集">\${highlightedContent}</div>
 				
 				<div class="detail-meta">
 					<div class="meta-item">
-						<span>使用回数:</span>
+						<span>number of uses:</span>
 						<span>\${prompt.usageCount}回</span>
 					</div>
 				</div>
@@ -1258,9 +1695,24 @@ class PromptTemplatePanel {
 		// 変数部分をハイライト
 		function highlightVariables(content) {
 			const escaped = escapeHtml(content);
+			
+			// 一度にすべての変数パターンを処理（重複を避けるため）
 			return escaped.replace(
-				/\\{([a-zA-Z][a-zA-Z0-9_]*)\\}/g, 
-				'<span class="variable-highlight">{\$1}</span>'
+				/\\{([\\w\\u3040-\\u309F\\u30A0-\\u30FF\\u4E00-\\u9FAF\\u3400-\\u4DBF]+)(?::([^}]+))?\\}/g,
+				(match, variableName, defaultValue) => {
+					if (defaultValue) {
+						if (defaultValue.startsWith('@')) {
+							// ファイルデフォルト値の場合
+							return \`<span class="variable-highlight">{\${variableName}:<span class="file-default-highlight">\${defaultValue}</span>}</span>\`;
+						} else {
+							// 通常のデフォルト値の場合
+							return \`<span class="variable-highlight">{\${variableName}:\${defaultValue}}</span>\`;
+						}
+					} else {
+						// デフォルト値なしの場合
+						return \`<span class="variable-highlight">{\${variableName}}</span>\`;
+					}
+				}
 			);
 		}
 		
@@ -1268,7 +1720,7 @@ class PromptTemplatePanel {
 		function updateVariablePanel(prompt) {
 			const variableElement = document.getElementById('variablePanel');
 			
-			// プロンプト内容から変数を抽出（レベル5で本格実装予定）
+			// プロンプト内容から変数を抽出（日本語対応版）
 			const variables = extractVariables(prompt.content);
 			
 			if (variables.length === 0) {
@@ -1283,35 +1735,279 @@ class PromptTemplatePanel {
 					<div class="variable-list">
 						\${variables.map(variable => \`
 							<div class="variable-item">
-								<label class="variable-label" for="var_\${variable}">\${variable}:</label>
-								<input 
-									type="text" 
-									class="variable-input" 
-									id="var_\${variable}"
-									placeholder="値を入力..."
-
-								/>
+								<label class="variable-label" for="var_\${variable.name}">\${variable.name}:</label>
+								<div class="variable-input-container">
+									<input 
+										type="text" 
+										class="variable-input" 
+										id="var_\${variable.name}"
+										placeholder="\${variable.defaultValue || 'Enter values or click 📁 to select file'}"
+										value="\${variable.defaultValue || ''}"
+										onkeydown="handleVariableInputKeydown(event)"
+										title="\${variable.defaultValue && variable.defaultValue.startsWith('@') ? 'File default: ' + variable.defaultValue : (variable.defaultValue ? 'Default value: ' + variable.defaultValue : '')}"
+									/>
+									<button 
+										class="set-default-button" 
+										onclick="setCurrentValueAsDefault('\${variable.name}')"
+										title="Set current value as default"
+									>📌</button>
+									<button 
+										class="file-select-button" 
+										onclick="selectFileForVariable('\${variable.name}')"
+										title="ファイルを選択"
+									>📁</button>
+								</div>
 							</div>
 						\`).join('')}
 					</div>
 
 				\`;
+				
+
 			}
 		}
 		
-		// 変数を抽出（簡易版、レベル5で本格実装）
+		// 変数を抽出（日本語対応版）
 		function extractVariables(content) {
-			const regex = /\\{([a-zA-Z][a-zA-Z0-9_]*)\\}/g;
+			// 日本語を含む変数名に対応した正規表現
+			const regex = /\\{([\\w\\u3040-\\u309F\\u30A0-\\u30FF\\u4E00-\\u9FAF\\u3400-\\u4DBF]+(?::[^}]*)?)\\}/g;
 			const variables = [];
 			let match;
 			
 			while ((match = regex.exec(content)) !== null) {
-				if (!variables.includes(match[1])) {
-					variables.push(match[1]);
+				// 変数名とデフォルト値を分離
+				const fullContent = match[1];
+				const separatorIndex = fullContent.indexOf(':');
+				const variableName = separatorIndex === -1 ? fullContent : fullContent.substring(0, separatorIndex);
+				const defaultValue = separatorIndex === -1 ? '' : fullContent.substring(separatorIndex + 1);
+				
+				// 重複チェック
+				if (!variables.some(v => v.name === variableName)) {
+					variables.push({
+						name: variableName,
+						defaultValue: defaultValue
+					});
 				}
 			}
 			
 			return variables;
+		}
+
+		// ドラッグ&ドロップのセットアップ
+		function setupDragAndDrop() {
+			// ドキュメント全体でドロップイベントをブロック（変数入力フィールド以外）
+			document.addEventListener('dragover', (e) => {
+				if (!e.target.classList.contains('variable-input')) {
+					e.preventDefault();
+					e.stopPropagation();
+				}
+			}, true);
+			
+			document.addEventListener('drop', (e) => {
+				if (!e.target.classList.contains('variable-input')) {
+					e.preventDefault();
+					e.stopPropagation();
+					console.log('非変数フィールドでのドロップをブロックしました');
+				}
+			}, true);
+			
+			const variableInputs = document.querySelectorAll('.variable-input');
+			
+			variableInputs.forEach(input => {
+				// ドラッグオーバー時の処理
+				input.addEventListener('dragover', (e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					input.style.backgroundColor = 'var(--vscode-list-hoverBackground)';
+					input.style.borderColor = 'var(--vscode-focusBorder)';
+				}, true);
+				
+				// ドラッグリーブ時の処理
+				input.addEventListener('dragleave', (e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					input.style.backgroundColor = '';
+					input.style.borderColor = '';
+				}, true);
+				
+				// ドロップ時の処理
+				input.addEventListener('drop', async (e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					input.style.backgroundColor = '';
+					input.style.borderColor = '';
+					
+					console.log('ドロップイベントが変数入力フィールドで処理されました');
+					
+					const files = e.dataTransfer.files;
+					if (files.length > 0) {
+						const file = files[0];
+						const variableName = input.id.replace('var_', '');
+						
+						console.log(\`ファイルがドロップされました: \${file.name}\`);
+						
+						// FileReader APIでファイル内容を直接読み取り
+						const reader = new FileReader();
+						reader.onload = function(e) {
+							const content = e.target.result;
+							
+							console.log(\`ファイル内容読み込み完了: \${file.name} (\${content.length}文字)\`);
+							
+							// VS Codeにファイル情報を送信
+							vscode.postMessage({
+								type: 'fileContentLoaded',
+								fileName: file.name,
+								variableName: variableName,
+								content: content
+							});
+							
+							// 入力フィールドを更新
+							input.value = \`@\${file.name}\`;
+							input.title = \`ファイル: \${file.name} (読み込み済み)\`;
+						};
+						
+						reader.onerror = function(e) {
+							console.error('ファイル読み込みエラー:', e);
+						};
+						
+						reader.readAsText(file);
+					}
+				}, true);
+			});
+		}
+
+
+
+		// 現在の値をデフォルト値として設定
+		function setCurrentValueAsDefault(variableName) {
+			const button = event ? event.target : null;
+			const input = document.getElementById(\`var_\${variableName}\`);
+			
+			if (!input || !selectedPrompt) {
+				console.error('入力フィールドまたは選択されたプロンプトが見つかりません');
+				return;
+			}
+			
+			const currentValue = input.value.trim();
+			if (!currentValue) {
+				console.log('現在の値が空のため、デフォルト値の設定をスキップします');
+				return;
+			}
+			
+			console.log(\`デフォルト値設定開始: \${variableName} = "\${currentValue}"\`);
+			
+			if (button) {
+				animateButtonClick(button, () => {
+					// プロンプト内容を更新
+					updatePromptWithNewDefault(variableName, currentValue);
+				});
+			} else {
+				updatePromptWithNewDefault(variableName, currentValue);
+			}
+		}
+
+		// プロンプト内容のデフォルト値を更新
+		function updatePromptWithNewDefault(variableName, newDefaultValue) {
+			if (!selectedPrompt) return;
+			
+			let updatedContent = selectedPrompt.content;
+			
+			// 既存の変数パターンを検索
+			const existingPattern = new RegExp(\`\\\\{\${variableName}(?::[^}]*)?\\\\}\`, 'g');
+			const newVariablePattern = \`{\${variableName}:\${newDefaultValue}}\`;
+			
+			// 変数パターンを新しいデフォルト値付きに置換
+			updatedContent = updatedContent.replace(existingPattern, newVariablePattern);
+			
+			console.log(\`プロンプト内容更新: \${selectedPrompt.title}\`);
+			console.log('更新前:', selectedPrompt.content);
+			console.log('更新後:', updatedContent);
+			
+			// VS Codeにプロンプト更新を送信
+			vscode.postMessage({
+				type: 'updatePrompt',
+				id: selectedPrompt.id,
+				updates: { content: updatedContent }
+			});
+			
+			// ローカルの表示も更新
+			selectedPrompt.content = updatedContent;
+			
+			// プロンプト詳細表示を更新（変数ハイライトで@defaultが破線枠で表示される）
+			showPromptDetail(selectedPrompt);
+		}
+
+		// ファイル選択処理
+		function selectFileForVariable(variableName) {
+			const button = event ? event.target : null;
+			console.log(\`ファイル選択開始: 変数 \${variableName}\`);
+			
+			if (button) {
+				animateButtonClick(button, () => {
+					vscode.postMessage({
+						type: 'selectFileForVariable',
+						variableName: variableName
+					});
+				});
+			} else {
+				vscode.postMessage({
+					type: 'selectFileForVariable',
+					variableName: variableName
+				});
+			}
+		}
+
+		// ファイル選択結果処理
+		function handleFileSelected(variableName, fileName) {
+			console.log(\`ファイル選択結果: \${variableName} -> \${fileName}\`);
+			
+			const input = document.getElementById(\`var_\${variableName}\`);
+			if (input) {
+				input.value = \`@\${fileName}\`;
+				input.title = \`ファイル: \${fileName} (選択済み)\`;
+				console.log(\`変数フィールド更新: \${variableName} = @\${fileName}\`);
+			} else {
+				console.error(\`変数入力フィールドが見つかりません: var_\${variableName}\`);
+			}
+		}
+
+		// 変数入力フィールドのキーボード処理
+		function handleVariableInputKeydown(event) {
+			// Enterキーの場合、デフォルト動作を防止（フォーム送信やページリロードを防ぐ）
+			if (event.key === 'Enter') {
+				event.preventDefault();
+				event.stopPropagation();
+				// フォーカスを維持し、値を保持
+				console.log('変数入力フィールドでEnterキーが押されました - デフォルト動作を防止');
+				return false;
+			}
+		}
+
+		// 変数値を取得してVS Codeに送信
+		function getAndSendVariableValues() {
+			console.log('=== getAndSendVariableValues開始 ===');
+			const values = {};
+			
+			// 現在表示されている変数入力フィールドから値を取得
+			const variableInputs = document.querySelectorAll('.variable-input');
+			console.log(\`\${variableInputs.length}個の変数入力フィールドが見つかりました\`);
+			
+			variableInputs.forEach(input => {
+				const variableName = input.id.replace('var_', '');
+				const value = input.value.trim();
+				values[variableName] = value;
+				console.log(\`変数値取得: \${variableName} = "\${value}"\`);
+			});
+			
+			console.log('取得した変数値一覧:', values);
+			
+			// VS Codeに変数値を送信
+			vscode.postMessage({
+				type: 'variableValues',
+				values: values
+			});
+			
+			console.log('=== getAndSendVariableValues完了 ===');
 		}
 		
 
@@ -1417,7 +2113,8 @@ class PromptTemplatePanel {
 		function saveContent(newContent) {
 			if (!selectedPrompt) return;
 			
-			if (newContent.trim() === '' || newContent === selectedPrompt.content) {
+			// 空の場合や変更がない場合も保存する（空にするのも有効な操作）
+			if (newContent === selectedPrompt.content) {
 				cancelContentEdit();
 				return;
 			}
@@ -1453,6 +2150,15 @@ class PromptTemplatePanel {
 			if (!contentElement) return;
 			
 			contentElement.classList.remove('editing');
+			
+			// 空のプロンプトかどうかを判定してemptyクラスを設定
+			const isEmpty = !selectedPrompt.content || selectedPrompt.content.trim() === '';
+			if (isEmpty) {
+				contentElement.classList.add('empty');
+			} else {
+				contentElement.classList.remove('empty');
+			}
+			
 			const highlightedContent = highlightVariables(selectedPrompt.content);
 			contentElement.innerHTML = highlightedContent;
 		}
@@ -1568,25 +2274,68 @@ class PromptTemplatePanel {
 		
 		// 新しいプロンプトを作成
 		function createPrompt() {
+			const button = event ? event.target : null;
 			console.log('createPrompt 関数が呼び出されました');
-			vscode.postMessage({ type: 'createPrompt' });
-			console.log('createPrompt メッセージを送信しました');
+			
+			if (button) {
+				animateButtonClick(button, () => {
+					vscode.postMessage({ type: 'createPrompt' });
+					console.log('createPrompt メッセージを送信しました');
+				});
+			} else {
+				vscode.postMessage({ type: 'createPrompt' });
+				console.log('createPrompt メッセージを送信しました');
+			}
 		}
 		
+		// ボタンクリック時のアニメーション効果
+		function animateButtonClick(button, callback) {
+			// クリック効果を追加
+			button.classList.add('clicked');
+			
+			// 少し遅延してコールバック実行
+			setTimeout(() => {
+				if (callback) callback();
+				
+				// アニメーション効果を削除
+				setTimeout(() => {
+					button.classList.remove('clicked');
+				}, 150);
+			}, 100);
+		}
+
 		// プロンプトを削除
 		function deletePrompt(id) {
-			vscode.postMessage({ type: 'deletePrompt', id });
+			const button = event ? event.target : null;
+			if (button) {
+				animateButtonClick(button, () => {
+					vscode.postMessage({ type: 'deletePrompt', id });
+				});
+			} else {
+				vscode.postMessage({ type: 'deletePrompt', id });
+			}
 		}
 		
 		// プロンプトをコピー
 		function copyPrompt(id) {
+			const button = event ? event.target : null;
 			const prompt = currentPrompts.find(p => p.id === id);
 			if (prompt) {
-				vscode.postMessage({ 
-					type: 'copyPrompt', 
-					id: id,
-					content: prompt.content 
-				});
+				if (button) {
+					animateButtonClick(button, () => {
+						vscode.postMessage({ 
+							type: 'copyPrompt', 
+							id: id,
+							content: prompt.content 
+						});
+					});
+				} else {
+					vscode.postMessage({ 
+						type: 'copyPrompt', 
+						id: id,
+						content: prompt.content 
+					});
+				}
 			}
 		}
 		
@@ -1633,7 +2382,7 @@ class PromptTemplatePanel {
 
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
 	// Use the console to output diagnostic information (console.log) and errors (console.error)
 	// This line of code will only be executed once when your extension is activated
 	console.log('Prompt Template Manager が起動しました！');
@@ -1644,6 +2393,15 @@ export function activate(context: vscode.ExtensionContext) {
 		// Prompt Template Manager が正常にアクティベートされました
 	} catch (error) {
 		console.error('初期メッセージ表示エラー:', error);
+	}
+
+	// VariableStorageの初期化
+	try {
+		const variableStorage = VariableStorage.getInstance();
+		await variableStorage.setContext(context);
+		console.log('VariableStorage が正常に初期化されました');
+	} catch (error) {
+		console.error('VariableStorage 初期化エラー:', error);
 	}
 
 	// プロンプトマネージャーの初期化
@@ -1657,11 +2415,17 @@ export function activate(context: vscode.ExtensionContext) {
 		return;
 	}
 
+	// 変数設定パネルの登録（コマンド登録前に実行）
+	const variableSettingsProvider = new VariableSettingsPanel(context.extensionUri);
+	context.subscriptions.push(
+		vscode.window.registerWebviewViewProvider(VariableSettingsPanel.viewType, variableSettingsProvider)
+	);
+
 	// メインパネルを開くコマンド
 	const openPanelCommand = vscode.commands.registerCommand('prompt-template-manager.openPanel', async () => {
 		console.log('openPanel コマンドが実行されました');
 		try {
-			PromptTemplatePanel.createOrShow(context.extensionUri, promptManager);
+			PromptTemplatePanel.createOrShow(context.extensionUri, promptManager, variableSettingsProvider);
 			console.log('Webviewパネルが正常に表示されました');
 		} catch (error) {
 			console.error('パネル表示中にエラーが発生:', error);

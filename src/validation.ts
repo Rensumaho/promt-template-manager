@@ -37,13 +37,8 @@ export class PromptValidator {
             }
         }
 
-        // プロンプト内容の検証
-        if (!input.content || input.content.trim().length === 0) {
-            errors.push({
-                field: 'content',
-                message: 'プロンプトの内容を入力してください'
-            });
-        } else if (input.content.length > PROMPT_CONSTANTS.MAX_CONTENT_LENGTH) {
+        // プロンプト内容の検証（空のプロンプトも許可）
+        if (input.content && input.content.length > PROMPT_CONSTANTS.MAX_CONTENT_LENGTH) {
             errors.push({
                 field: 'content',
                 message: `プロンプト内容は${PROMPT_CONSTANTS.MAX_CONTENT_LENGTH}文字以内で入力してください`
