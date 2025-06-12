@@ -14,6 +14,7 @@ Prompt Template Manager addresses the common challenge of repeatedly crafting si
 - **🔍 Smart Search**: Quickly find prompts from your collection
 - **📊 Usage Tracking**: Automatic sorting by usage frequency
 - **💾 Global Storage**: Prompts are available across all VS Code workspaces
+- **📤 Export/Import**: Backup and share your prompt collections with selective export and instant refresh
 
 ### ✅ File Content Integration
 
@@ -54,6 +55,7 @@ Please review
 ### ✅ User Experience Enhancements
 
 - **🎭 Activity Bar Integration**: Custom PTM icon in the activity bar for quick access
+- **📤 Export/Import Buttons**: Direct access to export and import functions from activity bar
 - **⚡ Button Animations**: Visual feedback for all interactions
 - **🔄 State Persistence**: Maintains context when switching between windows
 - **🎨 Modern UI**: Beautiful, responsive interface with VS Code theming
@@ -84,6 +86,27 @@ Please review
 1. **Select Files**: Click the 📁 button next to variable inputs to open file selection dialog
 2. **File Reference**: Selected files are automatically referenced as `@filename` in the variable
 3. **Set Defaults**: Use the 📌 button to save current values as defaults
+
+### Export & Import
+
+1. **Export Prompts**:
+
+   - Click the 📤 "Export Prompts" button in the activity bar
+   - Select which prompts to export from the multi-selection dialog
+   - Choose save location for the JSON file
+   - Share the exported file with team members
+
+2. **Import Prompts**:
+   - Click the 📥 "Import Prompts" button in the activity bar
+   - Select a JSON file containing prompt data
+   - Prompts are instantly added and UI refreshes automatically
+   - Duplicate prompts are automatically skipped with notification
+
+### Advanced Features
+
+- **Export/Import**: Share prompt collections with team members
+- **Statistics**: View usage statistics and storage information
+- **Search**: Use the search functionality to quickly find specific prompts
 
 ## Installation
 
