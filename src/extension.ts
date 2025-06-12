@@ -929,11 +929,17 @@ class PromptTemplatePanel {
 		}
 		
 		.variable-highlight {
-			background: var(--vscode-editor-selectionHighlightBackground);
 			color: var(--vscode-editor-foreground);
 			padding: 2px 4px;
 			border-radius: 3px;
 			border: 1px solid var(--vscode-focusBorder);
+			font-weight: bold;
+		}
+		
+		.file-default-highlight {
+			color: var(--vscode-editor-foreground);
+			padding: 2px 4px;
+			border-radius: 3px;
 			font-weight: bold;
 		}
 		
@@ -1019,6 +1025,27 @@ class PromptTemplatePanel {
 		.file-select-button:hover {
 			background: var(--vscode-button-secondaryHoverBackground);
 		}
+
+		.set-default-button {
+			padding: 6px 8px;
+			background: var(--vscode-button-secondaryBackground);
+			color: var(--vscode-button-secondaryForeground);
+			border: 1px solid var(--vscode-button-border);
+			border-radius: 3px;
+			cursor: pointer;
+			font-size: 12px;
+			min-width: 32px;
+			height: 32px;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+		}
+
+		.set-default-button:hover {
+			background: var(--vscode-button-secondaryHoverBackground);
+		}
+
+
 		
 		.execute-button {
 			width: 100%;
@@ -1668,9 +1695,24 @@ class PromptTemplatePanel {
 		// 変数部分をハイライト
 		function highlightVariables(content) {
 			const escaped = escapeHtml(content);
+			
+			// 一度にすべての変数パターンを処理（重複を避けるため）
 			return escaped.replace(
-				/\\{([a-zA-Z][a-zA-Z0-9_]*)\\}/g, 
-				'<span class="variable-highlight">{\$1}</span>'
+				/\\{([\\w\\u3040-\\u309F\\u30A0-\\u30FF\\u4E00-\\u9FAF\\u3400-\\u4DBF]+)(?::([^}]+))?\\}/g,
+				(match, variableName, defaultValue) => {
+					if (defaultValue) {
+						if (defaultValue.startsWith('@')) {
+							// ファイルデフォルト値の場合
+							return \`<span class="variable-highlight">{\${variableName}:<span class="file-default-highlight">\${defaultValue}</span>}</span>\`;
+						} else {
+							// 通常のデフォルト値の場合
+							return \`<span class="variable-highlight">{\${variableName}:\${defaultValue}}</span>\`;
+						}
+					} else {
+						// デフォルト値なしの場合
+						return \`<span class="variable-highlight">{\${variableName}}</span>\`;
+					}
+				}
 			);
 		}
 		
@@ -1702,7 +1744,13 @@ class PromptTemplatePanel {
 										placeholder="\${variable.defaultValue || 'Enter values or click 📁 to select file'}"
 										value="\${variable.defaultValue || ''}"
 										onkeydown="handleVariableInputKeydown(event)"
+										title="\${variable.defaultValue && variable.defaultValue.startsWith('@') ? 'File default: ' + variable.defaultValue : (variable.defaultValue ? 'Default value: ' + variable.defaultValue : '')}"
 									/>
+									<button 
+										class="set-default-button" 
+										onclick="setCurrentValueAsDefault('\${variable.name}')"
+										title="Set current value as default"
+									>📌</button>
 									<button 
 										class="file-select-button" 
 										onclick="selectFileForVariable('\${variable.name}')"
@@ -1829,6 +1877,65 @@ class PromptTemplatePanel {
 		}
 
 
+
+		// 現在の値をデフォルト値として設定
+		function setCurrentValueAsDefault(variableName) {
+			const button = event ? event.target : null;
+			const input = document.getElementById(\`var_\${variableName}\`);
+			
+			if (!input || !selectedPrompt) {
+				console.error('入力フィールドまたは選択されたプロンプトが見つかりません');
+				return;
+			}
+			
+			const currentValue = input.value.trim();
+			if (!currentValue) {
+				console.log('現在の値が空のため、デフォルト値の設定をスキップします');
+				return;
+			}
+			
+			console.log(\`デフォルト値設定開始: \${variableName} = "\${currentValue}"\`);
+			
+			if (button) {
+				animateButtonClick(button, () => {
+					// プロンプト内容を更新
+					updatePromptWithNewDefault(variableName, currentValue);
+				});
+			} else {
+				updatePromptWithNewDefault(variableName, currentValue);
+			}
+		}
+
+		// プロンプト内容のデフォルト値を更新
+		function updatePromptWithNewDefault(variableName, newDefaultValue) {
+			if (!selectedPrompt) return;
+			
+			let updatedContent = selectedPrompt.content;
+			
+			// 既存の変数パターンを検索
+			const existingPattern = new RegExp(\`\\\\{\${variableName}(?::[^}]*)?\\\\}\`, 'g');
+			const newVariablePattern = \`{\${variableName}:\${newDefaultValue}}\`;
+			
+			// 変数パターンを新しいデフォルト値付きに置換
+			updatedContent = updatedContent.replace(existingPattern, newVariablePattern);
+			
+			console.log(\`プロンプト内容更新: \${selectedPrompt.title}\`);
+			console.log('更新前:', selectedPrompt.content);
+			console.log('更新後:', updatedContent);
+			
+			// VS Codeにプロンプト更新を送信
+			vscode.postMessage({
+				type: 'updatePrompt',
+				id: selectedPrompt.id,
+				updates: { content: updatedContent }
+			});
+			
+			// ローカルの表示も更新
+			selectedPrompt.content = updatedContent;
+			
+			// プロンプト詳細表示を更新（変数ハイライトで@defaultが破線枠で表示される）
+			showPromptDetail(selectedPrompt);
+		}
 
 		// ファイル選択処理
 		function selectFileForVariable(variableName) {
