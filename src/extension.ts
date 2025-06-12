@@ -24,9 +24,11 @@ class PromptTemplateTreeProvider implements vscode.TreeDataProvider<PromptTreeIt
 
 	getChildren(element?: PromptTreeItem): Thenable<PromptTreeItem[]> {
 		if (!element) {
-			// Root level items - シンプルにOpen Managerのみ
+			// Root level items - Open Manager, Export, Import
 			const items: PromptTreeItem[] = [
-				new PromptTreeItem('📝 Open Manager', 'openManager', vscode.TreeItemCollapsibleState.None)
+				new PromptTreeItem('📝 Open Manager', 'openManager', vscode.TreeItemCollapsibleState.None),
+				new PromptTreeItem('📤 Export Prompts', 'exportData', vscode.TreeItemCollapsibleState.None),
+				new PromptTreeItem('📥 Import Prompts', 'importData', vscode.TreeItemCollapsibleState.None)
 			];
 			return Promise.resolve(items);
 		}
@@ -51,6 +53,18 @@ class PromptTreeItem extends vscode.TreeItem {
 				title: 'Open Prompt Template Manager'
 			};
 			this.iconPath = new vscode.ThemeIcon('window');
+		} else if (itemType === 'exportData') {
+			this.command = {
+				command: 'prompt-template-manager.exportDataWithSelection',
+				title: 'Export Selected Prompts'
+			};
+			this.iconPath = new vscode.ThemeIcon('export');
+		} else if (itemType === 'importData') {
+			this.command = {
+				command: 'prompt-template-manager.importDataWithRefresh',
+				title: 'Import Prompts'
+			};
+			this.iconPath = new vscode.ThemeIcon('import');
 		}
 	}
 }
@@ -2510,7 +2524,7 @@ export async function activate(context: vscode.ExtensionContext) {
 		}
 	});
 
-	// データエクスポートコマンド
+	// データエクスポートコマンド（従来版）
 	const exportDataCommand = vscode.commands.registerCommand('prompt-template-manager.exportData', async () => {
 		try {
 			const exportData = await promptManager.exportData();
@@ -2525,13 +2539,67 @@ export async function activate(context: vscode.ExtensionContext) {
 
 			if (saveUri) {
 				await vscode.workspace.fs.writeFile(saveUri, Buffer.from(exportData, 'utf8'));
+				vscode.window.showInformationMessage('プロンプトデータをエクスポートしました');
 			}
 		} catch (error) {
-			// エクスポートに失敗しました
+			vscode.window.showErrorMessage('エクスポートに失敗しました');
 		}
 	});
 
-	// データインポートコマンド
+	// プロンプト選択機能付きエクスポートコマンド
+	const exportDataWithSelectionCommand = vscode.commands.registerCommand('prompt-template-manager.exportDataWithSelection', async () => {
+		try {
+			const allPrompts = promptManager.getPrompts();
+			
+			if (allPrompts.length === 0) {
+				vscode.window.showInformationMessage('エクスポートするプロンプトがありません');
+				return;
+			}
+
+			// プロンプト選択UI
+			interface PromptQuickPickItem extends vscode.QuickPickItem {
+				prompt: PromptData;
+			}
+
+			const promptItems: PromptQuickPickItem[] = allPrompts.map((prompt: PromptData) => ({
+				label: prompt.title,
+				description: `使用回数: ${prompt.usageCount}回`,
+				detail: prompt.content.length > 100 ? prompt.content.substring(0, 100) + '...' : prompt.content,
+				prompt: prompt
+			}));
+
+			const selectedItems = await vscode.window.showQuickPick(promptItems, {
+				canPickMany: true,
+				placeHolder: 'エクスポートするプロンプトを選択してください（複数選択可）',
+				title: 'プロンプトエクスポート'
+			});
+
+			if (!selectedItems || selectedItems.length === 0) {
+				return;
+			}
+
+			const selectedPrompts = selectedItems.map(item => item.prompt);
+			const exportData = await promptManager.exportSelectedPrompts(selectedPrompts);
+			
+			// ファイルに保存
+			const saveUri = await vscode.window.showSaveDialog({
+				defaultUri: vscode.Uri.file(`selected-prompts-${new Date().toISOString().slice(0, 10)}.json`),
+				filters: {
+					'JSON Files': ['json']
+				}
+			});
+
+			if (saveUri) {
+				await vscode.workspace.fs.writeFile(saveUri, Buffer.from(exportData, 'utf8'));
+				vscode.window.showInformationMessage(`${selectedPrompts.length}個のプロンプトをエクスポートしました`);
+			}
+		} catch (error) {
+			console.error('選択エクスポートエラー:', error);
+			vscode.window.showErrorMessage('エクスポートに失敗しました');
+		}
+	});
+
+	// データインポートコマンド（従来版）
 	const importDataCommand = vscode.commands.registerCommand('prompt-template-manager.importData', async () => {
 		try {
 			// ファイルを選択
@@ -2550,10 +2618,59 @@ export async function activate(context: vscode.ExtensionContext) {
 				
 				const result = await promptManager.importData(jsonData);
 				
-				// インポート完了
+				if (result.imported > 0) {
+					vscode.window.showInformationMessage(`${result.imported}個のプロンプトをインポートしました`);
+				}
+				if (result.errors.length > 0) {
+					vscode.window.showWarningMessage(`警告: ${result.errors.join(', ')}`);
+				}
 			}
 		} catch (error) {
-			// インポートに失敗しました
+			vscode.window.showErrorMessage('インポートに失敗しました');
+		}
+	});
+
+	// 即時反映機能付きインポートコマンド
+	const importDataWithRefreshCommand = vscode.commands.registerCommand('prompt-template-manager.importDataWithRefresh', async () => {
+		try {
+			// ファイルを選択
+			const openUri = await vscode.window.showOpenDialog({
+				canSelectFiles: true,
+				canSelectFolders: false,
+				canSelectMany: false,
+				filters: {
+					'JSON Files': ['json']
+				}
+			});
+
+			if (openUri && openUri[0]) {
+				const fileContent = await vscode.workspace.fs.readFile(openUri[0]);
+				const jsonData = Buffer.from(fileContent).toString('utf8');
+				
+				const result = await promptManager.importData(jsonData);
+				
+				// 結果表示
+				if (result.imported > 0) {
+					vscode.window.showInformationMessage(`${result.imported}個のプロンプトをインポートしました`);
+					
+					// 即時反映: TreeDataProviderを更新
+					treeDataProvider.refresh();
+					
+					// メインパネルが開いている場合は更新
+					if (PromptTemplatePanel.currentPanel) {
+						PromptTemplatePanel.currentPanel.refresh();
+					}
+				} else {
+					vscode.window.showInformationMessage('インポートするプロンプトがありませんでした');
+				}
+				
+				if (result.errors.length > 0) {
+					vscode.window.showWarningMessage(`警告: ${result.errors.join(', ')}`);
+				}
+			}
+		} catch (error) {
+			console.error('インポートエラー:', error);
+			vscode.window.showErrorMessage('インポートに失敗しました');
 		}
 	});
 
@@ -2600,7 +2717,9 @@ export async function activate(context: vscode.ExtensionContext) {
 			openPanelCommand, 
 			createPromptCommand, 
 			exportDataCommand, 
+			exportDataWithSelectionCommand,
 			importDataCommand, 
+			importDataWithRefreshCommand,
 			showStatsCommand,
 			openPromptCommand
 		);
@@ -2609,7 +2728,9 @@ export async function activate(context: vscode.ExtensionContext) {
 			'prompt-template-manager.openPanel',
 			'prompt-template-manager.createPrompt',
 			'prompt-template-manager.exportData',
+			'prompt-template-manager.exportDataWithSelection',
 			'prompt-template-manager.importData',
+			'prompt-template-manager.importDataWithRefresh',
 			'prompt-template-manager.showStats'
 		]);
 	} catch (error) {
@@ -2952,6 +3073,17 @@ class PromptManager {
 		} catch (error) {
 			console.error('エクスポートに失敗:', error);
 			throw new Error('データのエクスポートに失敗しました');
+		}
+	}
+
+	// 選択されたプロンプトをエクスポート
+	async exportSelectedPrompts(selectedPrompts: PromptData[]): Promise<string> {
+		try {
+			const exportData = await this.storage.exportData(selectedPrompts);
+			return JSON.stringify(exportData, null, 2);
+		} catch (error) {
+			console.error('選択エクスポートに失敗:', error);
+			throw new Error('選択されたプロンプトのエクスポートに失敗しました');
 		}
 	}
 
