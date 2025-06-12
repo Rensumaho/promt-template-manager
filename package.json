@@ -61,6 +61,14 @@
           "type": "webview",
           "contextualTitle": "Prompt Variables"
         }
+      ],
+      "promptTemplateManager": [
+        {
+          "id": "promptTemplateManager.main",
+          "name": "Prompt Templates",
+          "type": "tree",
+          "contextualTitle": "Prompt Template Manager"
+        }
       ]
     },
     "viewsContainers": {
@@ -68,7 +76,7 @@
         {
           "id": "promptTemplateManager",
           "title": "Prompt Template Manager",
-          "icon": "$(symbol-variable)"
+          "icon": "resources/ptm-icon.svg"
         }
       ]
     },

@@ -7,6 +7,54 @@ import { VariableSettingsPanel } from './ui/variableSettingsPanel';
 import { PromptUtils, PromptValidator } from './validation';
 import { VariableStorage } from './variableStorage';
 
+// TreeDataProvider for Activity Bar
+class PromptTemplateTreeProvider implements vscode.TreeDataProvider<PromptTreeItem> {
+	private _onDidChangeTreeData: vscode.EventEmitter<PromptTreeItem | undefined | null | void> = new vscode.EventEmitter<PromptTreeItem | undefined | null | void>();
+	readonly onDidChangeTreeData: vscode.Event<PromptTreeItem | undefined | null | void> = this._onDidChangeTreeData.event;
+
+	constructor(private promptManager: PromptManager) {}
+
+	refresh(): void {
+		this._onDidChangeTreeData.fire();
+	}
+
+	getTreeItem(element: PromptTreeItem): vscode.TreeItem {
+		return element;
+	}
+
+	getChildren(element?: PromptTreeItem): Thenable<PromptTreeItem[]> {
+		if (!element) {
+			// Root level items - シンプルにOpen Managerのみ
+			const items: PromptTreeItem[] = [
+				new PromptTreeItem('📝 Open Manager', 'openManager', vscode.TreeItemCollapsibleState.None)
+			];
+			return Promise.resolve(items);
+		}
+		return Promise.resolve([]);
+	}
+}
+
+class PromptTreeItem extends vscode.TreeItem {
+	constructor(
+		public readonly label: string,
+		public readonly itemType: string,
+		public readonly collapsibleState: vscode.TreeItemCollapsibleState,
+		public readonly promptId?: string
+	) {
+		super(label, collapsibleState);
+		
+		this.contextValue = itemType;
+		
+		if (itemType === 'openManager') {
+			this.command = {
+				command: 'prompt-template-manager.openPanel',
+				title: 'Open Prompt Template Manager'
+			};
+			this.iconPath = new vscode.ThemeIcon('window');
+		}
+	}
+}
+
 // メインのWebviewパネルクラス
 class PromptTemplatePanel {
 	public static currentPanel: PromptTemplatePanel | undefined;
@@ -2421,6 +2469,17 @@ export async function activate(context: vscode.ExtensionContext) {
 		vscode.window.registerWebviewViewProvider(VariableSettingsPanel.viewType, variableSettingsProvider)
 	);
 
+	// アクティビティバー用TreeDataProviderの登録
+	const treeDataProvider = new PromptTemplateTreeProvider(promptManager);
+	const treeView = vscode.window.createTreeView('promptTemplateManager.main', {
+		treeDataProvider: treeDataProvider,
+		showCollapseAll: false
+	});
+	context.subscriptions.push(treeView);
+
+	// PromptManagerにTreeDataProviderの参照を設定（更新時に通知するため）
+	promptManager.setTreeDataProvider(treeDataProvider);
+
 	// メインパネルを開くコマンド
 	const openPanelCommand = vscode.commands.registerCommand('prompt-template-manager.openPanel', async () => {
 		console.log('openPanel コマンドが実行されました');
@@ -2498,6 +2557,24 @@ export async function activate(context: vscode.ExtensionContext) {
 		}
 	});
 
+	// プロンプトを直接開くコマンド
+	const openPromptCommand = vscode.commands.registerCommand('prompt-template-manager.openPrompt', async (promptId: string) => {
+		try {
+			// メインパネルを開く
+			PromptTemplatePanel.createOrShow(context.extensionUri, promptManager, variableSettingsProvider);
+			
+			// 指定されたプロンプトを選択状態にする
+			promptManager.setSelectedPrompt(promptId);
+			
+			// パネルを更新してプロンプトを表示
+			if (PromptTemplatePanel.currentPanel) {
+				PromptTemplatePanel.currentPanel.refresh();
+			}
+		} catch (error) {
+			console.error('プロンプトを開く際にエラーが発生:', error);
+		}
+	});
+
 	// 統計表示コマンド
 	const showStatsCommand = vscode.commands.registerCommand('prompt-template-manager.showStats', async () => {
 		try {
@@ -2524,7 +2601,8 @@ export async function activate(context: vscode.ExtensionContext) {
 			createPromptCommand, 
 			exportDataCommand, 
 			importDataCommand, 
-			showStatsCommand
+			showStatsCommand,
+			openPromptCommand
 		);
 		console.log('すべてのコマンドが正常に登録されました');
 		console.log('登録されたコマンド:', [
@@ -2551,6 +2629,7 @@ class PromptManager {
 	private selectedPromptId: string | null = null;
 	private currentSearchQuery: string | null = null;
 	private currentSearchOptions: any = {};
+	private treeDataProvider?: PromptTemplateTreeProvider;
 
 	constructor(context: vscode.ExtensionContext) {
 		try {
@@ -2605,6 +2684,13 @@ class PromptManager {
 	getSelectedPromptId(): string | null {
 		return this.selectedPromptId;
 	}
+
+	// TreeDataProviderを設定
+	setTreeDataProvider(provider: PromptTemplateTreeProvider): void {
+		this.treeDataProvider = provider;
+	}
+
+
 
 	// 検索状態を設定
 	setSearchState(query: string | null, options: any = {}): void {
