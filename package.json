@@ -20,7 +20,9 @@
     "onCommand:prompt-template-manager.openPanel",
     "onCommand:prompt-template-manager.createPrompt",
     "onCommand:prompt-template-manager.exportData",
+    "onCommand:prompt-template-manager.exportDataWithSelection",
     "onCommand:prompt-template-manager.importData",
+    "onCommand:prompt-template-manager.importDataWithRefresh",
     "onCommand:prompt-template-manager.showStats",
     "onView:variableSettings"
   ],
@@ -43,8 +45,18 @@
         "category": "Prompt Template Manager"
       },
       {
+        "command": "prompt-template-manager.exportDataWithSelection",
+        "title": "Export Selected Prompts",
+        "category": "Prompt Template Manager"
+      },
+      {
         "command": "prompt-template-manager.importData",
         "title": "Import Prompts Data",
+        "category": "Prompt Template Manager"
+      },
+      {
+        "command": "prompt-template-manager.importDataWithRefresh",
+        "title": "Import Prompts with Refresh",
         "category": "Prompt Template Manager"
       },
       {
@@ -92,7 +104,13 @@
           "command": "prompt-template-manager.exportData"
         },
         {
+          "command": "prompt-template-manager.exportDataWithSelection"
+        },
+        {
           "command": "prompt-template-manager.importData"
+        },
+        {
+          "command": "prompt-template-manager.importDataWithRefresh"
         },
         {
           "command": "prompt-template-manager.showStats"
